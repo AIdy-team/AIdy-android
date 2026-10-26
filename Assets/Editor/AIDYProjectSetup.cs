@@ -41,7 +41,7 @@ public class AIDYProjectSetup : EditorWindow
         foreach (string guid in guids)
         {
             string path = AssetDatabase.GUIDToAssetPath(guid);
-            if (path.Contains("本体v1_モデル"))
+            if (path.Contains("本体v2_モデル"))
             {
                 Material mat = AssetDatabase.LoadAssetAtPath<Material>(path);
                 if (mat != null && mat.GetFloat("_Mode") != 0) // Opaqueでない場合
@@ -163,7 +163,7 @@ public class AIDYProjectSetup : EditorWindow
         GameObject txtStatusObj = new GameObject("Text");
         txtStatusObj.transform.SetParent(statusObj.transform, false);
         var txtStatus = txtStatusObj.AddComponent<Text>();
-        txtStatus.text = "🧠 本体v1モデル 準備完了"; txtStatus.color = new Color(0.2f, 0.5f, 0.9f);
+        txtStatus.text = "🧠 本体v2モデル 準備完了"; txtStatus.color = new Color(0.2f, 0.5f, 0.9f);
         txtStatus.fontSize = 36; txtStatus.alignment = TextAnchor.MiddleCenter;
         txtStatus.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         var rtTxtStatus = txtStatusObj.GetComponent<RectTransform>();
@@ -189,7 +189,7 @@ public class AIDYProjectSetup : EditorWindow
         Toggle tglLegs = CreateToggle("Toggle_Legs", "足モジュール", panelPage0.transform);
         Toggle tglFace = CreateToggle("Toggle_Face", "カメラディスプレイ", panelPage0.transform);
         
-        Button btnPet = CreateButton("Btn_Pet", "💖 本体v1ロボとなでなで遊ぶ", panelPage0.transform);
+        Button btnPet = CreateButton("Btn_Pet", "💖 本体v2ロボとなでなで遊ぶ", panelPage0.transform);
         btnPet.GetComponent<Image>().color = new Color(1f, 0.4f, 0.5f);
         btnPet.GetComponentInChildren<Text>().color = Color.white;
 

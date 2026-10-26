@@ -681,7 +681,7 @@ namespace Aidy
         {
             var c = ScrollPage(page);
             SectionTitle(c, "ロボット設定", true);
-            var card = Card(c, null, default, default, "アセンブリ構造", "本体v1_モデル.obj (透明化防止完全対応)");
+            var card = Card(c, null, default, default, "アセンブリ構造", "本体v2_モデル.obj (透明化防止完全対応)");
             UI.Icon(card, IconId.Check, 14, Theme.Green);
             card = Card(c, null, default, default, "スピーカー音量", "効果音 & 音声応答");
             UI.Label(card, "60%", 13, Theme.Primary, true);
