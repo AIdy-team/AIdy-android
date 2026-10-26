@@ -19,6 +19,7 @@ namespace Aidy
     /// AR 画面。ARCore が使える端末では AR Foundation で床/机の平面に本体v1_モデルを配置し、
     /// 使えない場合 (非対応端末・エディタ・PC) は WebDemo と同じく
     /// 「カメラ映像の上にタップした位置を基準に配置」する方式で動作する。
+    /// 表示するモデルは ModuleConfig のモジュール付き (付け替えはタブの「画面上」で行う)。
     /// </summary>
     public class AidyARView : MonoBehaviour
     {
@@ -54,6 +55,7 @@ namespace Aidy
         Camera arCam;
         ARRaycastManager raycaster;
         Transform placedRoot, placedModel, placedRing;
+        AidyModuleRig fallbackRig, placedRig;
         float placedYaw;
         ARSessionState lastState = ARSessionState.None;
         static readonly List<ARRaycastHit> hits = new List<ARRaycastHit>();
@@ -71,6 +73,7 @@ namespace Aidy
             var view = root.AddComponent<AidyARView>();
             view.BuildFallbackScene();
             view.arCapable = XRLoaderActive;
+            ModuleConfig.Changed += view.OnModuleChanged;
             return view;
         }
 
@@ -84,6 +87,21 @@ namespace Aidy
         }
 
         public void Bind(Canvas c) { canvas = c; }
+
+        /// <summary>モジュールの付け替えを AR のモデルにも反映する。</summary>
+        void OnModuleChanged(string slot, ModuleKind? removed, ModuleKind? added)
+        {
+            fallbackRig?.Sync();
+            placedRig?.Sync();
+            if (placedModel != null) placedModel.localPosition = new Vector3(0, ARModelSize * 0.5f + placedRig.LegReach, 0);
+        }
+
+        /// <summary>「画面上」に切り替えたとき: カメラを止める (AR セッション/Web カメラ)。</summary>
+        public void StopCamera()
+        {
+            if (webcam != null && webcam.isPlaying) webcam.Pause();
+            if (session != null) session.enabled = false;
+        }
 
         // ------------------------------------------------------------ フォールバック 3D シーン
 
@@ -113,7 +131,8 @@ namespace Aidy
 
             arCube = new TNode("ARCubeGroup", t);
             arCube.Apply();
-            if (AidyModel.BuildScaledInstance(arCube.T, 0.9f, FallbackLayer) == null)
+            fallbackRig = new AidyModuleRig(arCube.T, 0.9f, FallbackLayer, false);
+            if (!fallbackRig.HasModel)
             {
                 var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 Destroy(cube.GetComponent<Collider>());
@@ -297,8 +316,9 @@ namespace Aidy
 
             placedModel = new GameObject("Model").transform;
             placedModel.SetParent(placedRoot, false);
-            placedModel.localPosition = new Vector3(0, ARModelSize * 0.5f, 0);
-            if (AidyModel.BuildScaledInstance(placedModel, ARModelSize, 0) == null)
+            placedRig = new AidyModuleRig(placedModel, ARModelSize, 0, false);
+            placedModel.localPosition = new Vector3(0, ARModelSize * 0.5f + placedRig.LegReach, 0); // 足があれば足先を床に
+            if (!placedRig.HasModel)
             {
                 var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 Destroy(cube.GetComponent<Collider>());
@@ -498,6 +518,7 @@ namespace Aidy
 
         void OnDestroy()
         {
+            ModuleConfig.Changed -= OnModuleChanged;
             if (webcam != null) webcam.Stop();
             if (rt != null) rt.Release();
         }

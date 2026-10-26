@@ -20,15 +20,17 @@ namespace Aidy
         const float DotsHeight = 24f;
         const float TabBarHeight = 64f;
 
-        static readonly string[] TabLabels = { "ホーム", "リモコン", "AR", "設定" };
-        static readonly IconId[] TabIcons = { IconId.House, IconId.Gamepad, IconId.Camera, IconId.Sliders };
+        const int PageHome = 0, PageDiary = 1, PageRemote = 2, PageAR = 3, PageSettings = 4;
+        static readonly string[] TabLabels = { "ホーム", "日記", "リモコン", "AR", "設定" };
+        static readonly IconId[] TabIcons = { IconId.Aidy, IconId.Book, IconId.Gamepad, IconId.Camera, IconId.Sliders };
 
         Canvas canvas;
         RectTransform safeRoot;
         Rect lastSafeArea;
         AidyPager pager;
-        AidyHomeRoom home;
+        AidyHomeRoom home, editRoom;
         AidyARView ar;
+        AidyDiaryPage diary;
 
         CanvasGroup prevGroup, nextGroup;
         Clickable prevClick, nextClick;
@@ -36,16 +38,21 @@ namespace Aidy
         readonly List<Tab> tabs = new List<Tab>();
 
         RectTransform canvasContainer;
-        TMP_Text aiStateText;
-        Image modelTagBg, modelTagIcon;
-        TMP_Text modelTagText;
-        readonly Dictionary<string, Chip> chips = new Dictionary<string, Chip>();
-        readonly Dictionary<string, bool> partsState = new Dictionary<string, bool> { { "ears", true }, { "tail", true }, { "legs", true }, { "face", true } };
-        Badge arStatus, arPos;
+        RawImage editImage;
+        TMP_Text aiStateText, editStateText, moduleSummary;
+        AidyMascot statusMascot, editMascot;
+        AidyToast homeToast, arToast;
+        AidyModuleTray moduleTray;
+        Badge arStatus;
+
+        // AR タブ: 「画面上」(付け替えプレビュー) と「AR」(カメラ) の切り替え
+        bool arMode;
+        GameObject arCameraUI, arOnScreenUI;
+        Image segOnScreenBg, segArBg;
+        TMP_Text segOnScreenLabel, segArLabel;
 
         class Dot { public LayoutElement Layout; public Image Image; public float T, From, To, P = 1f; }
         class Tab { public Image Bg, Icon; public TMP_Text Label; }
-        class Chip { public Image Bg, Border, Icon; public TMP_Text Text; }
 
         class Badge
         {
@@ -69,7 +76,7 @@ namespace Aidy
             Application.targetFrameRate = 60;
             QualitySettings.vSyncCount = 0;
             Screen.sleepTimeout = SleepTimeout.NeverSleep;
-            Input.multiTouchEnabled = false;
+            Input.multiTouchEnabled = true; // 3D モデルのピンチズーム
 
             SetupRendering();
             BuildEventSystem();
@@ -77,6 +84,7 @@ namespace Aidy
 
             home = AidyHomeRoom.Create(transform, new Vector3(1000, 0, 0));
             ar = AidyARView.Create(transform, new Vector3(2000, 0, 0));
+            editRoom = AidyHomeRoom.Create(transform, new Vector3(3000, 0, 0), true);
 
             BuildUI();
         }
@@ -84,11 +92,17 @@ namespace Aidy
         void Start()
         {
             home.StatusChanged += s => aiStateText.text = s;
-            home.ModelBadgeChanged += SetModelBadge;
+            home.ModelBadgeChanged += (ok, text) => homeToast.Show(ok ? AidyFace.Happy : AidyFace.Sleepy, text, ok ? 2.8f : 0f);
+            home.FaceReaction += (face, seconds) => statusMascot.React(face, seconds);
             home.ReportModelState();
+            editRoom.StatusChanged += s => editStateText.text = s;
+            editRoom.FaceReaction += (face, seconds) => editMascot.React(face, seconds);
+            ModuleConfig.Changed += (slot, removed, added) => UpdateModuleSummary();
+            UpdateModuleSummary();
 
             ar.SetStatus = (icon, color, size, text) => arStatus.Set(icon, color, size, text);
-            ar.SetPosition = text => arPos.Text.text = text;
+            ar.SetPosition = OnARPlaced;
+            SetARMode(false);
 
             pager.PageChanged += OnPageChanged;
             ApplyPageUI(0, true);
@@ -178,6 +192,7 @@ namespace Aidy
             BuildNavArrows();
 
             home.BindTarget(canvasContainer.GetComponentInChildren<RawImage>());
+            editRoom.BindTarget(editImage);
             ar.Bind(canvas);
         }
 
@@ -202,14 +217,45 @@ namespace Aidy
             header.anchoredPosition = Vector2.zero;
             UI.Image(header, "Bg", Theme.Device, 0, true).rectTransform.Stretch();
 
-            var title = UI.Label(header, "AIDY", 20, Theme.TextMain, true);
-            title.rectTransform.Pin(new Vector2(0, 0.5f), new Vector2(20, 0), new Vector2(120, 30));
+            var brand = UI.Rect("Brand", header);
+            brand.Pin(new Vector2(0, 0.5f), new Vector2(16, 0), Vector2.zero);
+            brand.HLayout(0, 0, 0, 0, 8);
+            brand.FitContent();
+            AidyMascot.Create(brand, 30, AidyFace.Normal, true, true);
+            UI.Label(brand, "AIDY", 20, Theme.TextMain, true);
 
-            var gear = UI.Rect("SettingsButton", header);
-            gear.Pin(new Vector2(1, 0.5f), new Vector2(-20, 0), new Vector2(36, 36));
+            var right = UI.Rect("Right", header);
+            right.Pin(new Vector2(1, 0.5f), new Vector2(-10, 0), Vector2.zero);
+            right.HLayout(0, 0, 0, 0, 6, TextAnchor.MiddleRight);
+            right.FitContent();
+            BuildBattery(right, BatteryLevel);
+
+            var gear = UI.Rect("SettingsButton", right);
+            gear.Layout(36, 36);
             UI.Image(gear, "Hit", new Color(0, 0, 0, 0), 18, true).rectTransform.Stretch();
             UI.Icon(gear, IconId.Gear, 16, Theme.TextSub).rectTransform.Pin(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(16, 16));
-            gear.gameObject.AddComponent<Clickable>().OnClick = () => pager.GoTo(3);
+            gear.gameObject.AddComponent<Clickable>().OnClick = () => pager.GoTo(PageSettings);
+        }
+
+        /// <summary>本体の充電量 (本体との通信ができたら実際の値に置き換える)。</summary>
+        const float BatteryLevel = 0.78f;
+
+        /// <summary>スマホのステータスバーのような電池表示: 「78%」+ 電池アイコン。</summary>
+        static void BuildBattery(RectTransform parent, float level)
+        {
+            var row = UI.Rect("Battery", parent);
+            row.HLayout(0, 0, 0, 0, 3, TextAnchor.MiddleCenter);
+            UI.Label(row, Mathf.RoundToInt(level * 100f) + "%", 12, Theme.Slate600, true);
+            var glyph = UI.Rect("Glyph", row);
+            glyph.Layout(26, 26);
+            UI.Icon(glyph, IconId.Battery, 26, Theme.Slate600).rectTransform.Pin(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(26, 26));
+            // アイコン (24 グリッド) の内側 x:3.1〜18.9, y:8.1〜15.9 を残量に応じて塗る
+            float u = 26f / 24f;
+            var fill = UI.Image(glyph, "Fill", level > 0.2f ? Theme.Green : Theme.Hex(0xef4444), 1.2f);
+            fill.rectTransform.anchorMin = fill.rectTransform.anchorMax = new Vector2(0, 0.5f);
+            fill.rectTransform.pivot = new Vector2(0, 0.5f);
+            fill.rectTransform.anchoredPosition = new Vector2(3.6f * u, 0);
+            fill.rectTransform.sizeDelta = new Vector2(14.8f * u * Mathf.Clamp01(level), 6.6f * u);
         }
 
         // ---------------------------------------------------------------- Nav arrows
@@ -247,7 +293,7 @@ namespace Aidy
             bg.IgnoreLayout();
             bar.HLayout(0, 0, 8, 8, 8, TextAnchor.MiddleCenter);
 
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < TabLabels.Length; i++)
             {
                 int page = i;
                 var img = UI.Image(bar, "Dot" + i, Theme.Slate300, 4, true);
@@ -279,7 +325,7 @@ namespace Aidy
             var h = row.HLayout(0, 0, 0, 0, 0, TextAnchor.MiddleCenter);
             h.childForceExpandWidth = true;
 
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < TabLabels.Length; i++)
             {
                 int page = i;
                 var slot = UI.Rect("Slot" + i, row);
@@ -290,7 +336,7 @@ namespace Aidy
                 var bg = UI.Image(item, "Bg", new Color(1, 1, 1, 0), 16, true);
                 bg.rectTransform.Stretch();
                 bg.IgnoreLayout();
-                item.VLayout(16, 16, 6, 6, 4, TextAnchor.MiddleCenter);
+                item.VLayout(10, 10, 6, 6, 4, TextAnchor.MiddleCenter);
                 item.FitContent();
                 var icon = UI.Icon(item, TabIcons[i], 18, Theme.Slate400);
                 var label = UI.Label(item, TabLabels[i], 11, Theme.Slate400, false, TextAnchor.MiddleCenter);
@@ -309,18 +355,19 @@ namespace Aidy
             vp.gameObject.AddComponent<RectMask2D>();
 
             var content = UI.Rect("ScrollContent", vp);
-            var pages = new RectTransform[4];
-            for (int i = 0; i < 4; i++) pages[i] = UI.Rect("Page" + i, content);
+            var pages = new RectTransform[TabLabels.Length];
+            for (int i = 0; i < pages.Length; i++) pages[i] = UI.Rect("Page" + i, content);
 
             pager = vp.gameObject.AddComponent<AidyPager>();
             pager.Viewport = vp;
             pager.Content = content;
             pager.Pages = pages;
 
-            BuildHomePage(pages[0]);
-            BuildRemotePage(pages[1]);
-            BuildARPage(pages[2]);
-            BuildSettingsPage(pages[3]);
+            BuildHomePage(pages[PageHome]);
+            BuildDiaryPage(pages[PageDiary]);
+            BuildRemotePage(pages[PageRemote]);
+            BuildARPage(pages[PageAR]);
+            BuildSettingsPage(pages[PageSettings]);
         }
 
         RectTransform ScrollPage(RectTransform page)
@@ -350,166 +397,119 @@ namespace Aidy
 
         void BuildHomePage(RectTransform page)
         {
-            var c = ScrollPage(page);
+            // 1 画面で完結 (スクロールなし): 本体の今のモジュール構成を 3D で表示 + 下に構成のまとめ
+            UI.Image(page, "Bg", Theme.Device, 0, true).rectTransform.Stretch();
+            var c = UI.Rect("Content", page).Stretch();
+            c.VLayout(16, 16, 6, 10, 10).childForceExpandWidth = true;
 
-            // battery-widget
-            var row = UI.Rect("BatteryRow", c);
-            row.HLayout(0, 0, 0, 0, 0, TextAnchor.MiddleCenter);
-            var bw = UI.Rect("BatteryWidget", row);
-            UI.Box(bw, new Color(1, 1, 1, 0.9f), 20, new BoxShadow(0, 4, 15, new Color(0, 0, 0, 0.04f)), Theme.Hex(0xe2e8f0, 0.8f));
-            bw.HLayout(18, 18, 8, 8, 12, TextAnchor.MiddleCenter);
-            var bar = UI.Rect("BatteryBar", bw);
-            bar.Layout(110, 14);
-            UI.Image(bar, "Track", Theme.Border, 7).rectTransform.Stretch();
-            var fill = UI.Image(bar, "Fill", Color.white, 7);
-            fill.rectTransform.anchorMin = Vector2.zero;
-            fill.rectTransform.anchorMax = new Vector2(0.78f, 1);
-            fill.rectTransform.offsetMin = fill.rectTransform.offsetMax = Vector2.zero;
-            var g = fill.gameObject.AddComponent<UIGradient>();
-            g.From = Theme.Hex(0x10b981);
-            g.To = Theme.Hex(0x34d399);
-            g.CssAngle = 90;
-            UI.Label(bw, "78%", 13, Theme.Slate600, true);
+            canvasContainer = View3D(c, home, out aiStateText, out statusMascot, "タップでなでなで ・ ドラッグで回転 ・ ピンチでズーム", out _);
+            homeToast = AidyToast.Create(canvasContainer, 52);
 
-            UI.Spacer(c, 6 + 4);
+            // いまのモジュール + お散歩 + 付け替えへ
+            var row = UI.Rect("ModuleSummary", c);
+            row.Layout(-1, 58);
+            UI.Box(row, Color.white, 18, new BoxShadow(0, 4, 16, new Color(0, 0, 0, 0.04f)), Theme.Border);
+            row.HLayout(14, 10, 8, 8, 8);
+            UI.Icon(row, IconId.Cubes, 14, Theme.Primary);
+            var info = UI.Rect("Info", row);
+            info.VLayout(0, 0, 0, 0, 1).childForceExpandWidth = true;
+            info.Layout(0, -1, 1);
+            UI.Label(info, "いまのモジュール", 10, Theme.TextSub, true);
+            moduleSummary = UI.Label(info, "", 12, Theme.TextMain, true);
+            moduleSummary.overflowMode = TextOverflowModes.Ellipsis;
+            UI.Label(row, "お散歩", 10, Theme.Slate400, true);
+            AidySwitch.Create(row, home.AIEnabled, 0.8f).OnChanged = on => home.ToggleAIWalk(on);
+            var edit = UI.Rect("EditButton", row);
+            UI.Box(edit, Theme.Primary, 15).raycastTarget = true;
+            edit.HLayout(12, 10, 7, 7, 4, TextAnchor.MiddleCenter);
+            UI.Label(edit, "付け替え", 12, Color.white, true);
+            UI.Icon(edit, IconId.ChevronRight, 10, Color.white);
+            var ec = edit.gameObject.AddComponent<Clickable>();
+            ec.PressScale = 0.95f;
+            ec.OnClick = () =>
+            {
+                SetARMode(false);
+                pager.GoTo(PageAR);
+            };
+        }
 
-            // canvas-container (3D)
-            canvasContainer = UI.Rect("CanvasContainer", c);
-            canvasContainer.Layout(-1, 330);
-            var mask = UI.Image(canvasContainer, "Mask", Theme.Hex(0xf1f5f9), 24, true);
+        /// <summary>
+        /// 3D ビュー (角丸マスク + RawImage + 操作 + 状態の吹き出し + 操作ヒント + ズームボタン)。
+        /// 状態の吹き出しの文字とデフォルメ Aidy を返す。
+        /// </summary>
+        RectTransform View3D(RectTransform parent, AidyHomeRoom room, out TMP_Text stateText, out AidyMascot mascot, string hintText, out AidyHomeTouch touch)
+        {
+            var box = UI.Rect("CanvasContainer", parent);
+            box.Layout(-1, -1, -1, 1).minHeight = 220;
+            var mask = UI.Image(box, "Mask", Theme.Hex(0xf1f5f9), 24, true);
             mask.rectTransform.Stretch();
             mask.gameObject.AddComponent<Mask>().showMaskGraphic = true;
             var raw = UI.Rect("ThreeCanvas", mask.transform).Stretch().gameObject.AddComponent<RawImage>();
             raw.color = Color.white;
-            var touch = raw.gameObject.AddComponent<AidyHomeTouch>();
-            touch.Room = home;
-            touch.OnTap = PetRobot;
+            touch = raw.gameObject.AddComponent<AidyHomeTouch>();
+            touch.Room = room;
 
             // ai-status-bubble
-            var bub = UI.Rect("AIStatus", canvasContainer);
+            var bub = UI.Rect("AIStatus", box);
             bub.Pin(new Vector2(0, 1), new Vector2(12, -12), Vector2.zero);
             UI.Box(bub, new Color(1, 1, 1, 0.88f), 16, new BoxShadow(0, 4, 12, new Color(0, 0, 0, 0.05f)));
             bub.HLayout(12, 12, 6, 6, 6);
             bub.FitContent();
-            UI.Icon(bub, IconId.Brain, 11, Theme.Primary);
-            aiStateText = UI.Label(bub, "本体v1モデル 描画完了", 11, Theme.Primary, true);
+            mascot = AidyMascot.Create(bub, 16, AidyFace.Normal);
+            stateText = UI.Label(bub, "こんにちは！", 11, Theme.Primary, true);
 
-            // model-tag
-            var tag = UI.Rect("ModelTag", canvasContainer);
-            tag.Pin(new Vector2(1, 1), new Vector2(-12, -12), Vector2.zero);
-            modelTagBg = UI.Box(tag, Theme.Hex(0x10b981, 0.9f), 12);
-            tag.HLayout(10, 10, 4, 4, 4);
-            tag.FitContent();
-            modelTagIcon = UI.Icon(tag, IconId.Check, 10, Color.white);
-            modelTagText = UI.Label(tag, "本体v1_モデル (鋼サテン)", 10, Color.white, true);
-
-            // rotate-hint
-            var hint = UI.Rect("RotateHint", canvasContainer);
+            // 操作ヒント
+            var hint = UI.Rect("RotateHint", box);
             hint.Pin(new Vector2(0.5f, 0), new Vector2(0, 10), Vector2.zero);
             UI.Box(hint, new Color(1, 1, 1, 0.8f), 12);
             hint.HLayout(12, 12, 4, 4, 8);
             hint.FitContent();
-            UI.Icon(hint, IconId.Paw, 11, Theme.TextSub);
-            UI.Label(hint, "タップしてナデナデ / ドラッグ回転", 11, Theme.TextSub, true);
+            UI.Icon(hint, IconId.HandPointer, 11, Theme.TextSub);
+            UI.Label(hint, hintText, 11, Theme.TextSub, true);
 
-            UI.Spacer(c, 4);
-
-            // debug-panel (モジュールパーツ合体・着脱コントロール)
-            var dp = UI.Rect("DebugPanel", c);
-            UI.Box(dp, Color.white, 18, new BoxShadow(0, 4, 16, new Color(0, 0, 0, 0.04f)), Theme.Border);
-            dp.VLayout(14, 14, 12, 12, 0).childForceExpandWidth = true;
-
-            var title = UI.Rect("Title", dp);
-            title.HLayout(0, 0, 0, 0, 0);
-            title.Layout(-1, 24);
-            var tl = UI.Rect("Label", title);
-            tl.HLayout(0, 0, 0, 0, 4);
-            tl.Layout(-1, -1, 1);
-            UI.Icon(tl, IconId.Cubes, 12, Theme.Primary);
-            UI.Label(tl, "モジュールモデル合体設計", 12, Theme.TextSub, true);
-            var aiToggle = AidySwitch.Create(title, true, 0.85f);
-            aiToggle.OnChanged = on => home.ToggleAIWalk(on);
-
-            UI.Spacer(dp, 8);
-            var row1 = UI.Rect("Row1", dp);
-            row1.HLayout(0, 0, 0, 0, 8).childForceExpandWidth = true;
-            AddChip(row1, "ears", "耳モジュール");
-            AddChip(row1, "tail", "尻尾モジュール");
-            UI.Spacer(dp, 8);
-            var row2 = UI.Rect("Row2", dp);
-            row2.HLayout(0, 0, 0, 0, 8).childForceExpandWidth = true;
-            AddChip(row2, "legs", "足モジュール");
-            AddChip(row2, "face", "カメラディスプレイ");
-
-            UI.Spacer(dp, 8);
-            var btn = UI.Rect("PetButton", dp);
-            btn.Layout(-1, 38);
-            UI.AddShadow(btn, 12, new BoxShadow(0, 4, 12, Theme.Hex(0xec4899, 0.3f)));
-            var bbg = UI.Image(btn, "Bg", Color.white, 12, true);
-            bbg.rectTransform.Stretch();
-            bbg.IgnoreLayout();
-            var pg = bbg.gameObject.AddComponent<UIGradient>();
-            pg.From = Theme.Hex(0xec4899);
-            pg.To = Theme.Hex(0xf43f5e);
-            pg.CssAngle = 135;
-            btn.HLayout(0, 0, 0, 0, 6, TextAnchor.MiddleCenter);
-            UI.Icon(btn, IconId.Heart, 12, Color.white);
-            UI.Label(btn, "本体v1ロボとなでなで遊ぶ", 12, Color.white, true);
-            var bc = btn.gameObject.AddComponent<Clickable>();
-            bc.PressScale = 0.97f;
-            bc.OnClick = PetRobot;
+            // ズームボタン (+ / −)
+            var zoom = UI.Rect("Zoom", box);
+            zoom.Pin(new Vector2(1, 0), new Vector2(-10, 44), Vector2.zero);
+            zoom.pivot = new Vector2(1, 0);
+            zoom.VLayout(0, 0, 0, 0, 6);
+            zoom.FitContent();
+            foreach (bool zoomIn in new[] { true, false })
+            {
+                var b = UI.Rect(zoomIn ? "ZoomIn" : "ZoomOut", zoom);
+                b.Layout(34, 34);
+                UI.Box(b, new Color(1, 1, 1, 0.9f), 17, new BoxShadow(0, 3, 10, new Color(0, 0, 0, 0.1f))).raycastTarget = true;
+                if (zoomIn) UI.Icon(b, IconId.Plus, 13, Theme.Slate600).rectTransform.Pin(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(13, 13));
+                else UI.Image(b, "Minus", Theme.Slate600, 1.5f).rectTransform.Pin(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(12, 3));
+                var c = b.gameObject.AddComponent<Clickable>();
+                c.PressScale = 0.9f;
+                c.OnClick = () => room.ZoomBy(zoomIn ? 1.25f : 0.8f);
+            }
+            if (room == editRoom) editImage = raw;
+            return box;
         }
 
-        void AddChip(RectTransform row, string key, string label)
+        void UpdateModuleSummary()
         {
-            var ch = UI.Rect("Chip_" + key, row);
-            ch.Layout(0, 36, 1); // grid-template-columns: 1fr 1fr (文字数に関係なく等幅)
-            var bg = UI.Image(ch, "Bg", Theme.PrimaryLight, 12, true);
-            bg.rectTransform.Stretch();
-            bg.IgnoreLayout();
-            var border = UI.Image(ch, "Border", Theme.Primary);
-            UI.SetRadius(border, 12, 1.5f);
-            border.rectTransform.Stretch();
-            border.IgnoreLayout();
-            ch.HLayout(12, 12, 8, 8, 0);
-            var text = UI.Label(ch, label, 12, Theme.Primary, true);
-            text.Layout(-1, -1, 1);
-            var icon = UI.Icon(ch, IconId.Check, 12, Theme.Primary);
-            chips[key] = new Chip { Bg = bg, Border = border, Icon = icon, Text = text };
-            ch.gameObject.AddComponent<Clickable>().OnClick = () => TogglePart(key);
+            var counts = new Dictionary<ModuleKind, int>();
+            foreach (ModuleKind k in ModuleConfig.Slots.Values)
+            {
+                counts.TryGetValue(k, out int n);
+                counts[k] = n + 1;
+            }
+            var parts = new List<string>();
+            foreach (ModuleKind k in ModuleCatalog.All)
+                if (counts.TryGetValue(k, out int n)) parts.Add(n > 1 ? $"{ModuleCatalog.Name(k)}×{n}" : ModuleCatalog.Name(k));
+            moduleSummary.text = parts.Count > 0 ? string.Join("・", parts) : "なし (本体だけ)";
         }
 
-        void TogglePart(string part)
+        // ---------------------------------------------------------------- PAGE 1: 日記
+
+        void BuildDiaryPage(RectTransform page)
         {
-            bool on = partsState[part] = !partsState[part];
-            home.SetPart(part, on);
-            Chip c = chips[part];
-            ColorTween.To(c.Bg, on ? Theme.PrimaryLight : Theme.Slate100, 0.2f);
-            ColorTween.To(c.Border, on ? Theme.Primary : new Color(Theme.Primary.r, Theme.Primary.g, Theme.Primary.b, 0f), 0.2f);
-            ColorTween.To(c.Text, on ? Theme.Primary : Theme.Slate700, 0.2f);
-            ColorTween.To(c.Icon, on ? Theme.Primary : Theme.Slate700, 0.2f);
-            c.Icon.sprite = AidyIcons.Get(on ? IconId.Check : IconId.XMark, 12);
+            diary = AidyDiaryPage.Build(page, ScrollPage(page));
         }
 
-        void PetRobot()
-        {
-            home.PetRobotDirectly();
-            var heart = UI.Icon(canvasContainer, IconId.Heart, 24, Theme.Hex(0xf472b6));
-            Vector2 size = canvasContainer.rect.size;
-            heart.rectTransform.anchorMin = heart.rectTransform.anchorMax = new Vector2(0, 1);
-            heart.rectTransform.pivot = new Vector2(0.5f, 0.5f);
-            heart.rectTransform.anchoredPosition = new Vector2(size.x / 2f, -(size.y / 2f - 20f + 16f));
-            heart.gameObject.AddComponent<HeartPop>();
-        }
-
-        void SetModelBadge(bool ok, string text)
-        {
-            modelTagBg.color = ok ? Theme.Hex(0x10b981, 0.9f) : Theme.Hex(0xef4444, 0.92f);
-            modelTagIcon.sprite = AidyIcons.Get(ok ? IconId.Check : IconId.XMark, 10);
-            modelTagText.text = text;
-        }
-
-        // ---------------------------------------------------------------- PAGE 1: リモコン・モジュール
+        // ---------------------------------------------------------------- PAGE 2: リモコン・モジュール
 
         void BuildRemotePage(RectTransform page)
         {
@@ -529,46 +529,49 @@ namespace Aidy
             UI.Icon(card, IconId.Plus, 16, Theme.Primary);
         }
 
-        // ---------------------------------------------------------------- PAGE 2: AR
+        // ---------------------------------------------------------------- PAGE 3: AR
 
         void BuildARPage(RectTransform page)
         {
-            var black = UI.Image(page, "Black", Color.black, 0, true);
+            // ---- AR (カメラ): 本体を床や机に置いて見る
+            var camUI = UI.Rect("ARCameraMode", page).Stretch();
+            arCameraUI = camUI.gameObject;
+            var black = UI.Image(camUI, "Black", Color.black, 0, true);
             black.rectTransform.Stretch();
 
-            var camArea = UI.Rect("WebcamArea", page).Stretch();
+            var camArea = UI.Rect("WebcamArea", camUI).Stretch();
             camArea.gameObject.AddComponent<RectMask2D>();
             var webcam = UI.Rect("WebcamVideo", camArea).gameObject.AddComponent<RawImage>();
             webcam.rectTransform.Pin(new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
             webcam.raycastTarget = false;
             webcam.enabled = false;
 
-            var overlay = UI.Rect("ARCanvas", page).Stretch().gameObject.AddComponent<RawImage>();
+            var overlay = UI.Rect("ARCanvas", camUI).Stretch().gameObject.AddComponent<RawImage>();
             overlay.raycastTarget = false;
 
-            var band = UI.Rect("TouchBand", page).Stretch(0, 70, 0, 80);
+            var band = UI.Rect("TouchBand", camUI).Stretch(0, 110, 0, 80);
             band.gameObject.AddComponent<Image>().color = new Color(0, 0, 0, 0);
             band.gameObject.AddComponent<AidyARTouch>().View = ar;
 
-            var top = UI.Rect("AROverlay", page);
+            var top = UI.Rect("AROverlay", camUI);
             top.anchorMin = new Vector2(0, 1);
             top.anchorMax = new Vector2(1, 1);
             top.pivot = new Vector2(0.5f, 1);
             top.offsetMin = new Vector2(20, 0);
-            top.offsetMax = new Vector2(-20, -20);
+            top.offsetMax = new Vector2(-20, -62);
             top.VLayout(0, 0, 0, 0, 8);
             top.FitContent(false, true);
-            arStatus = ARBadge(top, Theme.Hex(0x0f172a, 0.8f), IconId.HandPointer, Color.white, "カメラ越しに机や床をクリックして配置");
-            arPos = ARBadge(top, Theme.Hex(0x3b82f6, 0.85f), IconId.MapPin, Theme.Hex(0xef4444), "基準位置: (0.0, 0.0) 本体v1_モデル配置完了");
+            arStatus = ARBadge(top, Theme.Hex(0x0f172a, 0.8f), IconId.HandPointer, Color.white, "カメラ越しに机や床をタップして配置");
+            arToast = AidyToast.Create(camUI, 110);
 
-            var bottom = UI.Rect("ARBottomControls", page);
+            var bottom = UI.Rect("ARBottomControls", camUI);
             bottom.anchorMin = new Vector2(0, 0);
             bottom.anchorMax = new Vector2(1, 0);
             bottom.pivot = new Vector2(0.5f, 0);
             bottom.offsetMin = new Vector2(20, 20);
             bottom.offsetMax = new Vector2(-20, 68);
             bottom.HLayout(0, 0, 0, 0, 12, TextAnchor.MiddleCenter);
-            ARButton(bottom, IconId.Video, "Webカメラ起動", true).OnClick = () => ar.StartCamera();
+            ARButton(bottom, IconId.Video, "カメラ起動", true).OnClick = () => ar.StartCamera();
             ARButton(bottom, IconId.Crosshairs, "中央に再配置", false).OnClick = () => ar.ResetPosition();
 
             ar.Page = page;
@@ -576,6 +579,70 @@ namespace Aidy
             ar.WebcamArea = camArea;
             ar.WebcamImage = webcam;
             ar.OverlayImage = overlay;
+
+            // ---- 画面上: 3D プレビューで面をタップ → モジュールをドラッグ&ドロップで付け替え
+            var onScreen = UI.Rect("OnScreenMode", page).Stretch();
+            arOnScreenUI = onScreen.gameObject;
+            UI.Image(onScreen, "Bg", Theme.Device, 0, true).rectTransform.Stretch();
+            var c = UI.Rect("Content", onScreen).Stretch();
+            c.VLayout(16, 16, 56, 10, 10).childForceExpandWidth = true;
+            View3D(c, editRoom, out editStateText, out editMascot, "面をタップで選択 ・ ドラッグで回転 ・ ピンチでズーム", out AidyHomeTouch editTouch);
+            editStateText.text = "面をタップして付け替えよう";
+            var tray = UI.Rect("ModuleTray", c);
+            tray.Layout(-1, 140);
+            moduleTray = AidyModuleTray.Build(tray, editRoom, safeRoot);
+            editTouch.Tray = moduleTray;
+
+            // ---- 切り替え [画面上 | AR]
+            var seg = UI.Rect("ModeSwitch", page);
+            seg.Pin(new Vector2(0.5f, 1), new Vector2(0, -10), new Vector2(220, 38));
+            UI.Box(seg, new Color(1, 1, 1, 0.95f), 19, new BoxShadow(0, 4, 14, new Color(0, 0, 0, 0.12f)), Theme.Border);
+            seg.HLayout(3, 3, 3, 3, 3).childForceExpandWidth = true;
+            SegmentButton(seg, IconId.Cubes, "画面上", out segOnScreenBg, out segOnScreenLabel).OnClick = () => SetARMode(false);
+            SegmentButton(seg, IconId.Camera, "AR", out segArBg, out segArLabel).OnClick = () => SetARMode(true);
+        }
+
+        Clickable SegmentButton(RectTransform parent, IconId icon, string text, out Image bg, out TMP_Text label)
+        {
+            var b = UI.Rect("Segment_" + text, parent);
+            b.Layout(0, 32, 1);
+            bg = UI.Image(b, "Bg", Theme.Primary, 16, true);
+            bg.rectTransform.Stretch();
+            bg.IgnoreLayout();
+            b.HLayout(0, 0, 0, 0, 6, TextAnchor.MiddleCenter);
+            UI.Icon(b, icon, 12, Color.white).name = "Icon";
+            label = UI.Label(b, text, 12, Color.white, true);
+            var c = b.gameObject.AddComponent<Clickable>();
+            c.PressScale = 0.96f;
+            return c;
+        }
+
+        /// <summary>AR タブの表示切り替え。true: カメラで AR / false: 画面上の 3D で付け替えプレビュー。</summary>
+        void SetARMode(bool on)
+        {
+            arMode = on;
+            arCameraUI.SetActive(on);
+            arOnScreenUI.SetActive(!on);
+            StyleSegment(segOnScreenBg, segOnScreenLabel, !on);
+            StyleSegment(segArBg, segArLabel, on);
+            if (on && pager.Current == PageAR) ar.StartCamera();
+            if (!on) ar.StopCamera();
+        }
+
+        static void StyleSegment(Image bg, TMP_Text label, bool selected)
+        {
+            Color fg = selected ? Color.white : Theme.Slate600;
+            bg.color = selected ? Theme.Primary : new Color(1, 1, 1, 0);
+            label.color = fg;
+            foreach (Image i in bg.transform.parent.GetComponentsInChildren<Image>())
+                if (i.name == "Icon") i.color = fg;
+        }
+
+        void OnARPlaced(string text)
+        {
+            if (text.Contains("未配置")) arToast.Show(AidyFace.Normal, "床や机をタップして置いてね", 3f);
+            else if (text.Contains("中央")) arToast.Show(AidyFace.Happy, "まんなかに戻ったよ！", 2.2f);
+            else arToast.Show(AidyFace.Happy, "ここに置いたよ！", 2.2f);
         }
 
         Badge ARBadge(RectTransform parent, Color bg, IconId icon, Color iconColor, string text)
@@ -608,7 +675,7 @@ namespace Aidy
             return c;
         }
 
-        // ---------------------------------------------------------------- PAGE 3: 設定
+        // ---------------------------------------------------------------- PAGE 4: 設定
 
         void BuildSettingsPage(RectTransform page)
         {
@@ -624,6 +691,10 @@ namespace Aidy
             AidySwitch.Create(card, true);
             card = Card(c, null, default, default, "Wi-Fi 接続", "AIDY-5G-2.4G (接続済み)");
             UI.Icon(card, IconId.Wifi, 16, Theme.Green);
+            card = Card(c, IconId.Aidy, Theme.Primary, Theme.PrimaryLight, "Aidy本体の会話ログ", AidyDeviceLink.Host + " から Wi-Fi で日記を同期");
+            UI.Icon(card, IconId.ChevronRight, 12, Theme.Slate400);
+            card.gameObject.AddComponent<Image>().color = Color.clear;
+            card.gameObject.AddComponent<Clickable>().OnClick = () => pager.GoTo(PageDiary);
         }
 
         // ---------------------------------------------------------------- 共通: section-title / card-item
@@ -667,13 +738,16 @@ namespace Aidy
         void OnPageChanged(int page)
         {
             ApplyPageUI(page, false);
-            if (page == 2) ar.StartCamera();
+            if (page == PageAR && arMode) ar.StartCamera();
+            if (page == PageDiary) diary.OnShown();
         }
 
         void ApplyPageUI(int page, bool instant)
         {
-            SetArrow(prevGroup, prevClick, page != 0);
-            SetArrow(nextGroup, nextClick, page != pager.PageCount - 1);
+            // ホーム・AR (3D の操作) と日記 (カレンダー端の日付) は矢印と重なるので隠す (タブ/スワイプで移動)
+            bool hide = page == PageDiary || page == PageHome || page == PageAR;
+            SetArrow(prevGroup, prevClick, page != 0, hide);
+            SetArrow(nextGroup, nextClick, page != pager.PageCount - 1, hide);
 
             for (int i = 0; i < dots.Count; i++)
             {
@@ -710,9 +784,10 @@ namespace Aidy
             }
         }
 
-        static void SetArrow(CanvasGroup g, Clickable c, bool enabled)
+        static void SetArrow(CanvasGroup g, Clickable c, bool enabled, bool hidden)
         {
-            g.alpha = enabled ? 1f : 0.3f;
+            enabled &= !hidden;
+            g.alpha = hidden ? 0f : enabled ? 1f : 0.3f;
             g.blocksRaycasts = enabled;
             c.Interactable = enabled;
         }
@@ -738,13 +813,14 @@ namespace Aidy
             }
 
             // 見えているページだけカメラを回す (AI/アニメーションは常に動作)
-            home.Cam.enabled = pager.IsVisible(0);
-            ar.PageVisible = pager.IsVisible(2);
+            home.Cam.enabled = pager.IsVisible(PageHome);
+            editRoom.Cam.enabled = pager.IsVisible(PageAR) && !arMode;
+            ar.PageVisible = pager.IsVisible(PageAR) && arMode;
 
             // Android の戻るボタン
             if (Input.GetKeyDown(KeyCode.Escape))
             {
-                if (pager.Current != 0) pager.GoTo(0);
+                if (pager.Current != PageHome) pager.GoTo(PageHome);
                 else Application.Quit();
             }
         }
@@ -756,22 +832,82 @@ namespace Aidy
             Directory.CreateDirectory(dir);
             yield return new WaitForSeconds(2.5f);
             yield return Capture(dir, "page0_home");
-            PetRobot();
-            yield return new WaitForSeconds(0.45f);
-            yield return Capture(dir, "page0_pet");
-            TogglePart("ears");
-            TogglePart("legs");
-            yield return new WaitForSeconds(0.5f);
-            yield return Capture(dir, "page0_parts_off");
-            TogglePart("ears");
-            TogglePart("legs");
-            foreach (int p in new[] { 1, 3 }) // AR 画面はカメラ映像が写るので撮らない
+            home.ToggleAIWalk(false); // 正面を向けて確認
+            yield return new WaitForSeconds(2.6f);
+            yield return Capture(dir, "page0_front");
+            // 回しすぎて目を回す
+            for (int i = 0; i < 30; i++)
+            {
+                home.DraggingModel = true;
+                home.RotateBy(40f, 0f);
+                yield return null;
+            }
+            home.DraggingModel = false;
+            yield return new WaitForSeconds(0.6f);
+            yield return Capture(dir, "page0_dizzy");
+            yield return new WaitForSeconds(3.5f);
+            home.Play("dance");
+            yield return new WaitForSeconds(1.4f);
+            yield return Capture(dir, "page0_dance");
+            yield return new WaitForSeconds(2.2f);
+            home.Play("sneeze");
+            yield return new WaitForSeconds(0.72f);
+            yield return Capture(dir, "page0_sneeze");
+            yield return new WaitForSeconds(1f);
+            home.Play("doze");
+            yield return new WaitForSeconds(2f);
+            yield return Capture(dir, "page0_doze");
+            home.PetRobotDirectly(); // 起こす
+            yield return new WaitForSeconds(1.6f);
+            yield return Capture(dir, "page0_stretch");
+            yield return new WaitForSeconds(1.5f);
+            home.ZoomBy(1.8f);
+            yield return new WaitForSeconds(1f);
+            yield return Capture(dir, "page0_zoom");
+            home.ResetZoom();
+
+            // AR タブ「画面上」: 面をタップ → モジュールをドロップ
+            pager.GoTo(PageAR);
+            yield return new WaitForSeconds(1.2f);
+            yield return Capture(dir, "page3_onscreen");
+            editRoom.SelectFace("left");
+            yield return new WaitForSeconds(1.2f);
+            yield return Capture(dir, "page3_select_left");
+            editRoom.SetDropState(ModuleKind.Hand, "left_2");
+            yield return new WaitForSeconds(0.2f);
+            yield return Capture(dir, "page3_drag_hand");
+            editRoom.SetDropState(null, null);
+            editRoom.Replace(ModuleKind.Hand, "left_2");
+            yield return new WaitForSeconds(1.8f);
+            yield return Capture(dir, "page3_hand_left");
+            editRoom.SelectFace("right");
+            editRoom.Replace(ModuleKind.HandLight, "right_2");
+            yield return new WaitForSeconds(1.8f);
+            yield return Capture(dir, "page3_light_right");
+            editRoom.SelectFace(null);
+            editRoom.ZoomBy(1.5f);
+            yield return new WaitForSeconds(2f);
+            yield return Capture(dir, "page3_zoom");
+            editRoom.ResetZoom();
+            pager.GoTo(PageHome);
+            home.ToggleAIWalk(true);
+            yield return new WaitForSeconds(2f);
+            yield return Capture(dir, "page0_home_hands");
+            ModuleConfig.ResetToDefault();
+            foreach (int p in new[] { PageDiary, PageRemote, PageSettings }) // AR 画面はカメラ映像が写るので撮らない
             {
                 pager.GoTo(p);
-                yield return new WaitForSeconds(p == 2 ? 3f : 1f);
+                yield return new WaitForSeconds(1f);
                 yield return Capture(dir, "page" + p);
             }
-            pager.GoTo(0);
+            pager.GoTo(PageDiary);
+            diary.ShowLatestWithLogs();
+            yield return new WaitForSeconds(1f);
+            yield return Capture(dir, "page1_diary_entry");
+            pager.Pages[PageDiary].GetComponent<ScrollRect>().verticalNormalizedPosition = 0f;
+            yield return new WaitForSeconds(0.5f);
+            yield return Capture(dir, "page1_diary_logs");
+            pager.GoTo(PageHome);
             yield return new WaitForSeconds(1f);
             Application.Quit();
         }
@@ -782,58 +918,6 @@ namespace Aidy
             ScreenCapture.CaptureScreenshot(Path.Combine(dir, name + ".png"));
             yield return null;
             yield return null;
-        }
-    }
-
-    /// <summary>.heart-popup { animation: floatUp 1.2s ease-out }</summary>
-    public class HeartPop : MonoBehaviour
-    {
-        float t;
-        RectTransform rt;
-        Graphic g;
-        Vector2 basePos;
-
-        void Start()
-        {
-            rt = (RectTransform)transform;
-            g = GetComponent<Graphic>();
-            basePos = rt.anchoredPosition;
-            Apply();
-        }
-
-        void Update()
-        {
-            t += Time.deltaTime / 1.2f;
-            if (t >= 1f)
-            {
-                Destroy(gameObject);
-                return;
-            }
-            Apply();
-        }
-
-        void Apply()
-        {
-            float y, s, a;
-            if (t < 0.5f)
-            {
-                float p = CubicBezier.EaseOut.Evaluate(t / 0.5f);
-                y = Mathf.Lerp(0, 30, p);
-                s = Mathf.Lerp(0.5f, 1.2f, p);
-                a = 1f;
-            }
-            else
-            {
-                float p = CubicBezier.EaseOut.Evaluate((t - 0.5f) / 0.5f);
-                y = Mathf.Lerp(30, 60, p);
-                s = Mathf.Lerp(1.2f, 1f, p);
-                a = 1f - p;
-            }
-            rt.anchoredPosition = basePos + new Vector2(0, y);
-            rt.localScale = new Vector3(s, s, 1);
-            var c = g.color;
-            c.a = a;
-            g.color = c;
         }
     }
 }

@@ -30,6 +30,7 @@ namespace Aidy.EditorTools
         {
             RestoreXRSimulationTemp();
             EnsureTMPEssentials();
+            CopyStlResources();
             ConfigurePlayer();
             ConfigureXR();
             ConfigureLayers();
@@ -108,6 +109,26 @@ namespace Aidy.EditorTools
             AssetDatabase.Refresh();
         }
 
+        /// <summary>
+        /// Unity は .stl / .3mf を取り込めないため、Resources/AIDY/*.stl, *.3mf を *_stl.bytes, *_3mf.bytes (TextAsset) にコピーする。
+        /// 実行時は AidyModelLoader.Load("AIDY/耳_stl", ...) のように読む。
+        /// </summary>
+        static void CopyStlResources()
+        {
+            const string dir = "Assets/Resources/AIDY";
+            if (!Directory.Exists(dir)) return;
+            var models = new System.Collections.Generic.List<string>(Directory.GetFiles(dir, "*.stl"));
+            models.AddRange(Directory.GetFiles(dir, "*.3mf"));
+            foreach (string stl in models)
+            {
+                string dst = Path.Combine(dir, Path.GetFileNameWithoutExtension(stl) + "_" + Path.GetExtension(stl).TrimStart('.').ToLowerInvariant() + ".bytes");
+                if (File.Exists(dst) && File.GetLastWriteTimeUtc(dst) >= File.GetLastWriteTimeUtc(stl)) continue;
+                File.Copy(stl, dst, true);
+                File.SetLastWriteTimeUtc(dst, File.GetLastWriteTimeUtc(stl));
+            }
+            AssetDatabase.Refresh();
+        }
+
         /// <summary>TextMeshPro の SDF シェーダーと TMP Settings (文字描画に必須) をインポートする。</summary>
         static void EnsureTMPEssentials()
         {
@@ -142,6 +163,9 @@ namespace Aidy.EditorTools
             PlayerSettings.SetGraphicsAPIs(BuildTarget.Android, new[] { GraphicsDeviceType.OpenGLES3 });
             PlayerSettings.Android.startInFullscreen = false; // ステータスバーは端末のものを表示
             PlayerSettings.Android.renderOutsideSafeArea = false;
+            // Aidy 本体 (ローカル Wi-Fi 上の http://aidy.local) から会話ログを取得するため平文 HTTP を許可
+            PlayerSettings.Android.forceInternetPermission = true;
+            PlayerSettings.insecureHttpOption = InsecureHttpOption.AlwaysAllowed;
 
             // Windows プレビュー (縦長ウィンドウ)
             PlayerSettings.fullScreenMode = FullScreenMode.Windowed;
@@ -193,6 +217,7 @@ namespace Aidy.EditorTools
             SerializedProperty layers = tagManager.FindProperty("layers");
             layers.GetArrayElementAtIndex(Aidy.AidyHomeRoom.Layer).stringValue = "AidyHome3D";
             layers.GetArrayElementAtIndex(Aidy.AidyARView.FallbackLayer).stringValue = "AidyARPreview";
+            layers.GetArrayElementAtIndex(Aidy.AidyHomeRoom.EditLayer).stringValue = "AidyModuleEdit";
             tagManager.ApplyModifiedProperties();
         }
 
@@ -210,26 +235,26 @@ namespace Aidy.EditorTools
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
         }
 
-        /// <summary>アプリアイコン (青グラデーション + 本体v1ロボの顔) を生成。</summary>
+        /// <summary>アプリアイコン (青グラデーション + デフォルメ Aidy) を生成。</summary>
         static void CreateIcon()
         {
-            const int n = 512;
+            const int n = 512, m = 360;
             var tex = new Texture2D(n, n, TextureFormat.RGBA32, false);
             var px = new Color32[n * n];
             Color top = new Color32(0x3b, 0x82, 0xf6, 255), bottom = new Color32(0x63, 0x66, 0xf1, 255);
-            Color body = new Color32(0xe2, 0xe8, 0xf0, 255), face = new Color32(0x02, 0x06, 0x17, 255), eye = new Color32(0x38, 0xbd, 0xf8, 255);
+            Color32[] mascot = Aidy.AidyMascotArt.Render(Aidy.AidyFace.Normal, m, m);
+            int ox = (n - m) / 2, oy = (n - m) / 2 - 6;
             for (int y = 0; y < n; y++)
             {
                 for (int x = 0; x < n; x++)
                 {
-                    float u = x + 0.5f - n / 2f, v = y + 0.5f - n / 2f;
                     Color c = Color.Lerp(bottom, top, y / (float)n);
-                    c = Over(c, body, Cover(Box(u - 150, v - 150, 26, 40, 14)));  // 右耳
-                    c = Over(c, body, Cover(Box(u + 150, v - 150, 26, 40, 14)));  // 左耳
-                    c = Over(c, body, Cover(Box(u, v + 10, 170, 160, 48)));       // 本体
-                    c = Over(c, face, Cover(Box(u, v + 10, 120, 78, 22)));        // ディスプレイ
-                    c = Over(c, eye, Cover(Box(u - 50, v + 10, 14, 30, 7)));
-                    c = Over(c, eye, Cover(Box(u + 50, v + 10, 14, 30, 7)));
+                    int mx = x - ox, my = y - oy;
+                    if (mx >= 0 && mx < m && my >= 0 && my < m)
+                    {
+                        Color a = mascot[my * m + mx];
+                        c = Over(c, a, a.a);
+                    }
                     px[y * n + x] = c;
                 }
             }
@@ -243,13 +268,6 @@ namespace Aidy.EditorTools
             PlayerSettings.SetIcons(NamedBuildTarget.Unknown, new[] { icon }, IconKind.Any);
         }
 
-        static float Box(float x, float y, float hx, float hy, float r)
-        {
-            float qx = Mathf.Abs(x) - hx + r, qy = Mathf.Abs(y) - hy + r;
-            return new Vector2(Mathf.Max(qx, 0), Mathf.Max(qy, 0)).magnitude + Mathf.Min(Mathf.Max(qx, qy), 0) - r;
-        }
-
-        static float Cover(float d) => Mathf.Clamp01(0.5f - d);
         static Color Over(Color under, Color over, float a) => Color.Lerp(under, over, a);
 
         // ------------------------------------------------------------ ビルド

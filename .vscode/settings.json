@@ -51,5 +51,5 @@
         "temp/": true,
         "Temp/": true
     },
-    "dotnet.defaultSolution": "aidy-unity.sln"
+    "dotnet.defaultSolution": "AIdy-android.sln"
 }

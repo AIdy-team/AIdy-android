@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Aidy
@@ -67,6 +68,14 @@ namespace Aidy
             m.SetColor("_Color", color);
             m.SetFloat("_Metallic", metalness);
             m.SetFloat("_Glossiness", 1f - roughness);
+            return m;
+        }
+
+        /// <summary>テクスチャを貼ったライティングなしマテリアル。</summary>
+        public static Material Textured(Texture tex)
+        {
+            Material m = Basic(Color.white);
+            m.SetTexture("_MainTex", tex);
             return m;
         }
 
@@ -215,35 +224,37 @@ namespace Aidy
     }
 
     /// <summary>
-    /// 本体v1_モデル (.obj + .mtl) の読み込み。WebDemo の buildScaledInstance と同じく
+    /// 本体モデル (.obj + .mtl) の読み込み。WebDemo の buildScaledInstance と同じく
     /// 「中心を原点へ → 最大辺が targetSize になるよう一括スケール → X軸 -90° 回転」で配置する。
+    /// 本体v1_顔あり (顔パーツ装着時のメイン) と 本体v1_モデル (顔なし) の2種類がある。
     /// </summary>
     public static class AidyModel
     {
-        public const string ResourcePath = "AIDY/本体v1_モデル";
-        static GameObject source;
-        static bool tried;
+        public const string BodyPath = "AIDY/本体v1_モデル";
+        public const string BodyWithFacePath = "AIDY/本体v1_顔あり";
 
-        public static bool Available
+        static readonly Dictionary<string, GameObject> sources = new Dictionary<string, GameObject>();
+
+        static GameObject Source(string path)
         {
-            get
+            if (!sources.TryGetValue(path, out GameObject go))
             {
-                if (!tried)
-                {
-                    tried = true;
-                    source = Resources.Load<GameObject>(ResourcePath);
-                }
-                return source != null;
+                go = Resources.Load<GameObject>(path);
+                sources[path] = go;
             }
+            return go;
         }
 
+        public static bool IsAvailable(string path) => Source(path) != null;
+
         /// <summary>parent 配下に pivot を作って返す。モデルがなければ null。</summary>
-        public static Transform BuildScaledInstance(Transform parent, float targetSize, int layer)
+        public static Transform BuildScaledInstance(Transform parent, float targetSize, int layer, string path = BodyPath)
         {
-            if (!Available) return null;
+            GameObject source = Source(path);
+            if (source == null) return null;
 
             var inner = Object.Instantiate(source);
-            inner.name = "本体v1_モデル";
+            inner.name = source.name;
             inner.transform.localPosition = Vector3.zero;
             inner.transform.localRotation = Quaternion.identity;
             inner.transform.localScale = Vector3.one;
@@ -259,18 +270,17 @@ namespace Aidy
             float maxDim = Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z));
             if (maxDim <= 0f) maxDim = 1f;
 
-            // MTL の拡散色 (Kd) を引き継いだ不透明マテリアル (metalness 0.35 / roughness 0.4)
+            // MTL の拡散色 (Kd) を引き継いだ不透明マテリアル。サブメッシュ (材質) ごとに置き換える
             foreach (var r in renderers)
             {
-                Material src = r.sharedMaterial;
-                Color kd = (src != null && src.HasProperty("_Color")) ? src.color : new Color(0.627451f, 0.627451f, 0.627451f);
-                kd.a = 1f;
-                r.sharedMaterial = AidyMaterials.Standard(kd, 0.35f, 0.4f);
+                Material[] mats = r.sharedMaterials;
+                for (int i = 0; i < mats.Length; i++) mats[i] = SolidMaterial(mats[i]);
+                r.sharedMaterials = mats;
                 r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
                 r.receiveShadows = true;
             }
 
-            var pivot = new GameObject("BodyPivot").transform;
+            var pivot = new GameObject("BodyPivot_" + source.name).transform;
             pivot.SetParent(parent, false);
             inner.transform.SetParent(pivot, false);
             inner.transform.localPosition = -b.center;
@@ -278,6 +288,75 @@ namespace Aidy
             pivot.localRotation = Three.Rot(new Vector3(-Mathf.PI / 2f, 0, 0)); // 前面になるはずの面(底面)を前面(+Z)へ
             Three.SetLayer(pivot.gameObject, layer);
             return pivot;
+        }
+
+        /// <summary>顔あり/顔なしの両モデルを parent 配下に作り、顔パーツの着脱で表示を切り替える。</summary>
+        public class Variants
+        {
+            public readonly Transform WithFace;
+            public readonly Transform Plain;
+            public bool Any => WithFace != null || Plain != null;
+            public bool HasFaceModel => WithFace != null;
+
+            public Variants(Transform parent, float targetSize, int layer)
+            {
+                WithFace = BuildScaledInstance(parent, targetSize, layer, BodyWithFacePath);
+                Plain = BuildScaledInstance(parent, targetSize, layer, BodyPath);
+                // 外装の内側は空洞なので、モニター開口・カメラ穴・マイク穴・スロットから中身が見えないよう黒で埋める
+                if (WithFace != null) AddInteriorOccluder(WithFace, targetSize, layer);
+                if (Plain != null) AddInteriorOccluder(Plain, targetSize, layer);
+            }
+
+            /// <summary>顔あり: 本体v1_顔あり / 顔なし: 本体v1_モデル。戻り値は顔ありモデルを表示したか。</summary>
+            public bool SetFace(bool on)
+            {
+                bool useFace = on && WithFace != null;
+                if (WithFace != null) WithFace.gameObject.SetActive(useFace);
+                if (Plain != null) Plain.gameObject.SetActive(!useFace);
+                return useFace;
+            }
+        }
+
+        /// <summary>
+        /// 外装 (外形150mm・厚さ5mm) の内側の空洞 (140mm) を黒い箱で埋め、穴から中身が見えないようにする。
+        /// 寸法は docs/本体モデルv1解析.txt: 内壁 (±70mm) とのちらつきを防ぐため 139.8mm の箱を中心に置く。
+        /// </summary>
+        public static void AddInteriorOccluder(Transform pivot, float targetSize, int layer)
+        {
+            const float BodySizeMm = 150f, OccluderSizeMm = 139.8f;
+            var box = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            box.name = "InteriorOccluder";
+            Object.Destroy(box.GetComponent<Collider>());
+            box.layer = layer;
+            box.transform.SetParent(pivot, false);
+            box.transform.localPosition = Vector3.zero; // pivot = 外形の中心
+            box.transform.localRotation = Quaternion.identity;
+            // pivot のローカル単位では本体の一辺 = targetSize / pivot のスケール
+            float bodyLocal = targetSize / pivot.localScale.x;
+            box.transform.localScale = Vector3.one * (bodyLocal * OccluderSizeMm / BodySizeMm);
+            var r = box.GetComponent<MeshRenderer>();
+            r.sharedMaterial = AidyMaterials.Basic(Color.black);
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            r.receiveShadows = false;
+        }
+
+        /// <summary>
+        /// 鋼サテン: metalness 0.35 / roughness 0.4 (WebDemo の toSolidMaterial)。
+        /// エナメル塗装 (顔パーツ): 非金属の光沢塗装として metalness 0 / roughness 0.15。
+        /// </summary>
+        static Material SolidMaterial(Material src)
+        {
+            // Unity の OBJ インポーターは日本語名の .mtl を読めないことがあるため、
+            // 材質名が分かるものは .mtl と同じ Kd をここで指定する
+            string name = src != null ? src.name : "";
+            if (name.IndexOf("EnamelWhite", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return AidyMaterials.Standard(new Color(0.964706f, 0.964706f, 0.952941f), 0f, 0.15f);
+            if (name.IndexOf("SteelSatin", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return AidyMaterials.Standard(new Color(0.627451f, 0.627451f, 0.627451f), 0.35f, 0.4f);
+
+            Color kd = (src != null && src.HasProperty("_Color")) ? src.color : new Color(0.627451f, 0.627451f, 0.627451f);
+            kd.a = 1f;
+            return AidyMaterials.Standard(kd, 0.35f, 0.4f);
         }
     }
 }
