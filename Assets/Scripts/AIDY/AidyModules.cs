@@ -1,0 +1,590 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace Aidy
+{
+    /// <summary>本体に取り付けるモジュールの種類。</summary>
+    public enum ModuleKind { Ear, Tail, Legs, Face, Hand, HandLight }
+
+    /// <summary>モジュールの名前・アイコン・色・取り付けられる面。</summary>
+    public static class ModuleCatalog
+    {
+        public static readonly ModuleKind[] All = { ModuleKind.Ear, ModuleKind.Tail, ModuleKind.Legs, ModuleKind.Face, ModuleKind.Hand, ModuleKind.HandLight };
+
+        public static string Name(ModuleKind k)
+        {
+            switch (k)
+            {
+                case ModuleKind.Ear: return "耳";
+                case ModuleKind.Tail: return "尻尾";
+                case ModuleKind.Legs: return "足";
+                case ModuleKind.Hand: return "手";
+                case ModuleKind.HandLight: return "ライト手";
+                default: return "顔";
+            }
+        }
+
+        public static IconId Icon(ModuleKind k)
+        {
+            switch (k)
+            {
+                case ModuleKind.Ear: return IconId.Ear;
+                case ModuleKind.Tail: return IconId.Tail;
+                case ModuleKind.Legs: return IconId.Leg;
+                case ModuleKind.Hand: return IconId.Hand;
+                case ModuleKind.HandLight: return IconId.Flashlight;
+                default: return IconId.Aidy;
+            }
+        }
+
+        public static Color Tint(ModuleKind k)
+        {
+            switch (k)
+            {
+                case ModuleKind.Ear: return Theme.Hex(0xf97316);
+                case ModuleKind.Tail: return Theme.Hex(0x8b5cf6);
+                case ModuleKind.Legs: return Theme.Hex(0x10b981);
+                case ModuleKind.Hand: return Theme.Hex(0xec4899);
+                case ModuleKind.HandLight: return Theme.Hex(0xeab308);
+                default: return Theme.Primary;
+            }
+        }
+
+        /// <summary>モジュールをそのスロットに付けられるか (空きかどうかは見ない)。</summary>
+        public static bool Fits(ModuleKind k, BodySlot s)
+        {
+            switch (k)
+            {
+                case ModuleKind.Face: return s.IsMonitor;
+                case ModuleKind.Ear: return !s.IsMonitor && (s.Face == "top" || s.Face == "left" || s.Face == "right");
+                case ModuleKind.Tail: return !s.IsMonitor && (s.Face == "back" || s.Face == "top");
+                case ModuleKind.Legs: return !s.IsMonitor && s.Face == "bottom";
+                case ModuleKind.Hand:
+                case ModuleKind.HandLight: return !s.IsMonitor && (s.Face == "left" || s.Face == "right");
+            }
+            return false;
+        }
+
+        /// <summary>その面に付けられるモジュール。</summary>
+        public static List<ModuleKind> ForFace(string face)
+        {
+            var list = new List<ModuleKind>();
+            foreach (ModuleKind k in All)
+                foreach (BodySlot s in BodyLayout.OnFace(face))
+                    if (Fits(k, s))
+                    {
+                        list.Add(k);
+                        break;
+                    }
+            return list;
+        }
+    }
+
+    /// <summary>
+    /// 本体に付いているモジュールの構成 (スロット ID → モジュール)。ホーム・付け替えプレビュー・AR の
+    /// すべての 3D モデルがこれを表示する。端末に保存される。
+    /// </summary>
+    public static class ModuleConfig
+    {
+        const string PrefKey = "aidy.modules.v1";
+        static Dictionary<string, ModuleKind> slots;
+
+        /// <summary>(スロット, 外れたモジュール, 付いたモジュール)。差し替えは両方入る。</summary>
+        public static event Action<string, ModuleKind?, ModuleKind?> Changed;
+
+        public static IReadOnlyDictionary<string, ModuleKind> Slots
+        {
+            get
+            {
+                Load();
+                return slots;
+            }
+        }
+
+        public static ModuleKind? At(string slotId)
+        {
+            Load();
+            return slots.TryGetValue(slotId, out ModuleKind k) ? k : (ModuleKind?)null;
+        }
+
+        public static bool FaceOn => Has(ModuleKind.Face);
+        public static bool HasLegs => Has(ModuleKind.Legs);
+
+        public static bool Has(ModuleKind kind)
+        {
+            Load();
+            foreach (ModuleKind k in slots.Values) if (k == kind) return true;
+            return false;
+        }
+
+        public static int CountOnFace(string face)
+        {
+            Load();
+            int n = 0;
+            foreach (string id in slots.Keys) if (BodyLayout.Get(id)?.Face == face) n++;
+            return n;
+        }
+
+        /// <summary>そのスロットに付けられるか (空きであること)。</summary>
+        public static bool CanAttach(ModuleKind kind, string slotId)
+        {
+            BodySlot s = BodyLayout.Get(slotId);
+            return s != null && ModuleCatalog.Fits(kind, s) && At(slotId) == null;
+        }
+
+        public static bool Attach(ModuleKind kind, string slotId)
+        {
+            if (!CanAttach(kind, slotId)) return false;
+            slots[slotId] = kind;
+            Save();
+            Changed?.Invoke(slotId, null, kind);
+            return true;
+        }
+
+        public static void Detach(string slotId)
+        {
+            ModuleKind? old = At(slotId);
+            if (old == null) return;
+            slots.Remove(slotId);
+            Save();
+            Changed?.Invoke(slotId, old, null);
+        }
+
+        /// <summary>差し替え (old → kind)。空きなら普通に取り付け。</summary>
+        public static bool Replace(ModuleKind kind, string slotId)
+        {
+            BodySlot s = BodyLayout.Get(slotId);
+            if (s == null || !ModuleCatalog.Fits(kind, s)) return false;
+            ModuleKind? old = At(slotId);
+            if (old == kind) return false;
+            slots[slotId] = kind;
+            Save();
+            Changed?.Invoke(slotId, old, kind);
+            return true;
+        }
+
+        /// <summary>サンプルの初期構成: 上面に耳2つ・背面に尻尾・底面に足2組・正面に顔。</summary>
+        public static void ResetToDefault()
+        {
+            Load();
+            foreach (string id in new List<string>(slots.Keys)) Detach(id);
+            Attach(ModuleKind.Ear, "top_1");
+            Attach(ModuleKind.Ear, "top_3");
+            Attach(ModuleKind.Tail, "back_1");
+            Attach(ModuleKind.Legs, "bottom_1");
+            Attach(ModuleKind.Legs, "bottom_3");
+            Attach(ModuleKind.Face, "monitor");
+        }
+
+        static void Load()
+        {
+            if (slots != null) return;
+            slots = new Dictionary<string, ModuleKind>();
+            string saved = PlayerPrefs.GetString(PrefKey, null);
+            if (string.IsNullOrEmpty(saved))
+            {
+                ResetToDefault();
+                return;
+            }
+            foreach (string pair in saved.Split(','))
+            {
+                string[] kv = pair.Split(':');
+                if (kv.Length == 2 && Enum.TryParse(kv[1], out ModuleKind k) && BodyLayout.Get(kv[0]) != null) slots[kv[0]] = k;
+            }
+        }
+
+        static void Save()
+        {
+            var parts = new List<string>();
+            foreach (var kv in slots) parts.Add(kv.Key + ":" + kv.Value);
+            PlayerPrefs.SetString(PrefKey, string.Join(",", parts));
+            PlayerPrefs.Save();
+        }
+    }
+
+    /// <summary>本体の取り付け口 (接続スロット13本 + 顔モニター開口)。座標は本体の一辺=1 に正規化 (Unity 軸、+X=正面から見て左)。</summary>
+    public class BodySlot
+    {
+        public string Id, Face, Label;
+        public Vector3 Position, Normal, LongAxis;
+        public bool IsMonitor;
+        public float WidthMm, HeightMm;
+
+        /// <summary>取り付け面のローカル座標系 (+Y=外向き法線, +Z=正面 or 上)。</summary>
+        public Quaternion MountRotation
+        {
+            get
+            {
+                Vector3 forward = Mathf.Abs(Normal.z) > 0.5f ? Vector3.up : Vector3.forward;
+                return Quaternion.LookRotation(forward, Normal);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Resources/AIDY/body_v1_layout.json (docs/本体モデルv1解析.txt と同じ寸法) から取り付け口を読み込む。
+    /// </summary>
+    public static class BodyLayout
+    {
+        public static readonly string[] Faces = { "top", "front", "back", "left", "right", "bottom" };
+
+        [Serializable] class V3 { public float x, y, z; public Vector3 V => new Vector3(x, y, z); }
+
+        [Serializable]
+        class Feature
+        {
+            public string id, face, type;
+            public V3 position, normal, longAxis;
+            public float widthMm, heightMm, lengthMm;
+        }
+
+        [Serializable] class LayoutFile { public List<Feature> features; }
+
+        static List<BodySlot> slots;
+
+        public static IReadOnlyList<BodySlot> Slots
+        {
+            get
+            {
+                if (slots == null) Load();
+                return slots;
+            }
+        }
+
+        public static BodySlot Get(string id)
+        {
+            foreach (BodySlot s in Slots) if (s.Id == id) return s;
+            return null;
+        }
+
+        public static List<BodySlot> OnFace(string face)
+        {
+            var list = new List<BodySlot>();
+            foreach (BodySlot s in Slots) if (s.Face == face) list.Add(s);
+            return list;
+        }
+
+        public static string FaceLabel(string face)
+        {
+            switch (face)
+            {
+                case "top": return "上面";
+                case "front": return "正面";
+                case "back": return "背面";
+                case "left": return "左面";
+                case "right": return "右面";
+                default: return "底面";
+            }
+        }
+
+        public static Vector3 FaceNormal(string face)
+        {
+            switch (face)
+            {
+                case "top": return Vector3.up;
+                case "front": return Vector3.forward;
+                case "back": return Vector3.back;
+                case "left": return Vector3.right; // +X = 正面から見て左
+                case "right": return Vector3.left;
+                default: return Vector3.down;
+            }
+        }
+
+        /// <summary>その面を外から見たときの 2D 座標 (右, 上)。上面/底面は正面が画面下/上になる向き。</summary>
+        public static Vector2 Project(string face, Vector3 p)
+        {
+            switch (face)
+            {
+                case "front": return new Vector2(-p.x, p.y);
+                case "back": return new Vector2(p.x, p.y);
+                case "left": return new Vector2(p.z, p.y);
+                case "right": return new Vector2(-p.z, p.y);
+                case "top": return new Vector2(-p.x, -p.z);
+                default: return new Vector2(-p.x, p.z);
+            }
+        }
+
+        static void Load()
+        {
+            slots = new List<BodySlot>();
+            var asset = Resources.Load<TextAsset>("AIDY/body_v1_layout");
+            if (asset == null)
+            {
+                Debug.LogWarning("[AIDY] body_v1_layout.json が見つかりません");
+                return;
+            }
+            var file = JsonUtility.FromJson<LayoutFile>(asset.text);
+            var perFace = new Dictionary<string, int>();
+            foreach (Feature f in file.features)
+            {
+                bool monitor = f.id == "monitor";
+                if (f.type != "slot" && !monitor) continue; // カメラ穴・マイク穴は取り付け口ではない
+                perFace.TryGetValue(f.face, out int n);
+                perFace[f.face] = ++n;
+                slots.Add(new BodySlot
+                {
+                    Id = f.id,
+                    Face = f.face,
+                    Label = monitor ? "モニター" : "スロット" + n,
+                    Position = f.position.V,
+                    Normal = f.normal.V,
+                    LongAxis = f.longAxis != null ? f.longAxis.V : Vector3.zero,
+                    IsMonitor = monitor,
+                    WidthMm = f.widthMm,
+                    HeightMm = f.heightMm
+                });
+            }
+        }
+    }
+
+    /// <summary>モデルファイルの向き。取り付け面ローカル (+Y=外向き, +Z=正面) へどう変換するか。</summary>
+    public enum MountAxis
+    {
+        /// <summary>Z 上・-Y 正面・原点 (x,y) が取り付け位置、底面を取り付け面に置く (耳.stl)。</summary>
+        ZUpFrontMinusY,
+        /// <summary>-Y 方向へ突き出す。+Y 側の端 (XZ の中心) を取り付け面に置く。</summary>
+        OutwardMinusY,
+        /// <summary>
+        /// +X 側の面にあるマグネット用のくぼみ (スロットと同じ 28.8mm の溝) を本体に当てる。
+        /// くぼみの中心を取り付け位置に、+Y 側の端を正面 (+Z) に向ける (手_短い*.3mf)。
+        /// </summary>
+        MagnetPlusX
+    }
+
+    /// <summary>
+    /// STL (バイナリ/ASCII) と 3MF を読み込むランタイムローダー。Unity は .stl / .3mf を取り込めないため、
+    /// エディタのセットアップで Resources/AIDY/*.stl, *.3mf を *_stl.bytes, *_3mf.bytes にコピーしたものを TextAsset として読む。
+    /// 返すメッシュは取り付け面ローカル (単位 mm)。
+    /// </summary>
+    public static class AidyModelLoader
+    {
+        const float CreaseAngle = 40f;
+        static readonly Dictionary<string, Mesh> cache = new Dictionary<string, Mesh>();
+
+        public static Mesh Load(string resourcePath, MountAxis axis)
+        {
+            if (cache.TryGetValue(resourcePath, out Mesh m)) return m;
+            var asset = Resources.Load<TextAsset>(resourcePath);
+            if (asset == null) Debug.LogWarning("[AIDY] モデルが見つかりません: " + resourcePath);
+            else
+            {
+                try
+                {
+                    byte[] b = asset.bytes;
+                    bool zip = b.Length > 4 && b[0] == 'P' && b[1] == 'K';
+                    List<Vector3> tris = zip ? Parse3mf(b) : ParseStl(b);
+                    m = Build(tris, axis, resourcePath);
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"[AIDY] モデルの読込に失敗 {resourcePath}: {e.Message}");
+                }
+            }
+            cache[resourcePath] = m;
+            return m;
+        }
+
+        // ------------------------------------------------------------ 読み込み (三角形ごとに 3 頂点、単位 mm)
+
+        static List<Vector3> ParseStl(byte[] b)
+        {
+            var v = new List<Vector3>();
+            if (b.Length >= 84)
+            {
+                uint n = BitConverter.ToUInt32(b, 80);
+                if (84 + 50L * n == b.Length)
+                {
+                    for (int i = 0; i < n; i++)
+                    {
+                        int o = 84 + 50 * i + 12;
+                        for (int k = 0; k < 3; k++, o += 12)
+                            v.Add(new Vector3(BitConverter.ToSingle(b, o), BitConverter.ToSingle(b, o + 4), BitConverter.ToSingle(b, o + 8)));
+                    }
+                    return ToMm(v);
+                }
+            }
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            foreach (string raw in System.Text.Encoding.ASCII.GetString(b).Split('\n'))
+            {
+                string line = raw.Trim();
+                if (!line.StartsWith("vertex")) continue;
+                string[] p = line.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 4) continue;
+                v.Add(new Vector3(float.Parse(p[1], ci), float.Parse(p[2], ci), float.Parse(p[3], ci)));
+            }
+            return ToMm(v);
+        }
+
+        /// <summary>STL は単位を持たないので、全体が 1 未満ならメートルとみなして mm にする。</summary>
+        static List<Vector3> ToMm(List<Vector3> v)
+        {
+            if (v.Count == 0) return v;
+            Vector3 min = v[0], max = v[0];
+            foreach (Vector3 p in v)
+            {
+                min = Vector3.Min(min, p);
+                max = Vector3.Max(max, p);
+            }
+            Vector3 size = max - min;
+            if (Mathf.Max(size.x, Mathf.Max(size.y, size.z)) >= 1f) return v;
+            for (int i = 0; i < v.Count; i++) v[i] *= 1000f;
+            return v;
+        }
+
+        static readonly System.Text.RegularExpressions.Regex VertexRe = new System.Text.RegularExpressions.Regex(
+            "<vertex\\s+x=\"([^\"]+)\"\\s+y=\"([^\"]+)\"\\s+z=\"([^\"]+)\"");
+        static readonly System.Text.RegularExpressions.Regex TriangleRe = new System.Text.RegularExpressions.Regex(
+            "<triangle\\s+v1=\"(\\d+)\"\\s+v2=\"(\\d+)\"\\s+v3=\"(\\d+)\"");
+        static readonly System.Text.RegularExpressions.Regex MeshRe = new System.Text.RegularExpressions.Regex(
+            "<mesh>(.*?)</mesh>", System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        /// <summary>3MF (zip 内の 3D/3dmodel.model) の全オブジェクトのメッシュをまとめて読む。</summary>
+        static List<Vector3> Parse3mf(byte[] b)
+        {
+            string xml;
+            using (var zip = new System.IO.Compression.ZipArchive(new System.IO.MemoryStream(b)))
+            {
+                System.IO.Compression.ZipArchiveEntry entry = null;
+                foreach (var e in zip.Entries)
+                    if (e.FullName.EndsWith(".model", StringComparison.OrdinalIgnoreCase)) { entry = e; break; }
+                if (entry == null) throw new Exception("3dmodel.model がありません");
+                using (var r = new System.IO.StreamReader(entry.Open())) xml = r.ReadToEnd();
+            }
+
+            float unit = 1f;
+            var um = System.Text.RegularExpressions.Regex.Match(xml, "unit=\"(\\w+)\"");
+            if (um.Success)
+            {
+                switch (um.Groups[1].Value)
+                {
+                    case "micron": unit = 0.001f; break;
+                    case "centimeter": unit = 10f; break;
+                    case "inch": unit = 25.4f; break;
+                    case "foot": unit = 304.8f; break;
+                    case "meter": unit = 1000f; break;
+                }
+            }
+
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            var tris = new List<Vector3>();
+            foreach (System.Text.RegularExpressions.Match mesh in MeshRe.Matches(xml))
+            {
+                string body = mesh.Groups[1].Value;
+                var verts = new List<Vector3>();
+                foreach (System.Text.RegularExpressions.Match v in VertexRe.Matches(body))
+                    verts.Add(new Vector3(float.Parse(v.Groups[1].Value, ci), float.Parse(v.Groups[2].Value, ci), float.Parse(v.Groups[3].Value, ci)) * unit);
+                foreach (System.Text.RegularExpressions.Match t in TriangleRe.Matches(body))
+                {
+                    tris.Add(verts[int.Parse(t.Groups[1].Value)]);
+                    tris.Add(verts[int.Parse(t.Groups[2].Value)]);
+                    tris.Add(verts[int.Parse(t.Groups[3].Value)]);
+                }
+            }
+            return tris;
+        }
+
+        // ------------------------------------------------------------ 取り付け面ローカルへの変換 + 法線
+
+        static Mesh Build(List<Vector3> src, MountAxis axis, string name)
+        {
+            if (src.Count < 3) return null;
+            Vector3 min = src[0], max = src[0];
+            foreach (Vector3 p in src)
+            {
+                min = Vector3.Min(min, p);
+                max = Vector3.Max(max, p);
+            }
+
+            Vector2 pocket = axis == MountAxis.MagnetPlusX ? FindPocket(src, min, max) : Vector2.zero;
+            int count = src.Count - src.Count % 3;
+            var pos = new Vector3[count];
+            for (int i = 0; i < count; i++)
+            {
+                Vector3 p = src[i];
+                switch (axis)
+                {
+                    case MountAxis.ZUpFrontMinusY:
+                        // 右手系 (Z上, -Y正面, +X=正面から見て右) → Unity (+X=正面から見て左, +Y=上, +Z=正面)
+                        pos[i] = new Vector3(-p.x, p.z - min.z, -p.y);
+                        break;
+                    case MountAxis.OutwardMinusY:
+                    {
+                        float cx = (min.x + max.x) * 0.5f, cz = (min.z + max.z) * 0.5f;
+                        pos[i] = new Vector3(-(p.x - cx), max.y - p.y, p.z - cz);
+                        break;
+                    }
+                    default:
+                        // くぼみのある +X 面が本体側 (外向き = -X)、長手方向 +Y を正面へ
+                        pos[i] = new Vector3(-(p.z - pocket.y), max.x - p.x, p.y - pocket.x);
+                        break;
+                }
+            }
+
+            // 外向きの面が表になるよう巻き順をそろえる (符号付き体積が負なら反転)
+            double vol = 0;
+            for (int i = 0; i < count; i += 3) vol += Vector3.Dot(pos[i], Vector3.Cross(pos[i + 1], pos[i + 2]));
+            if (vol < 0)
+                for (int i = 0; i < count; i += 3) (pos[i + 1], pos[i + 2]) = (pos[i + 2], pos[i + 1]);
+
+            // 面法線を求め、同じ位置で角度が CreaseAngle 以内の面だけ平均してなめらかにする (角は立てたまま)
+            int tris = count / 3;
+            var faceN = new Vector3[tris];
+            var shared = new Dictionary<Vector3Int, List<int>>();
+            for (int t = 0; t < tris; t++)
+            {
+                Vector3 a = pos[t * 3], b = pos[t * 3 + 1], c = pos[t * 3 + 2];
+                faceN[t] = Vector3.Cross(b - a, c - a); // 長さ = 面積の2倍 (面積で重み付け)
+                for (int k = 0; k < 3; k++)
+                {
+                    Vector3Int key = Key(pos[t * 3 + k]);
+                    if (!shared.TryGetValue(key, out List<int> list)) shared[key] = list = new List<int>();
+                    list.Add(t);
+                }
+            }
+            float cos = Mathf.Cos(CreaseAngle * Mathf.Deg2Rad);
+            var normals = new Vector3[count];
+            for (int t = 0; t < tris; t++)
+            {
+                Vector3 nt = faceN[t].normalized;
+                for (int k = 0; k < 3; k++)
+                {
+                    Vector3 sum = Vector3.zero;
+                    foreach (int o in shared[Key(pos[t * 3 + k])])
+                        if (Vector3.Dot(faceN[o].normalized, nt) >= cos) sum += faceN[o];
+                    normals[t * 3 + k] = sum.sqrMagnitude > 0f ? sum.normalized : nt;
+                }
+            }
+
+            var idx = new int[count];
+            for (int i = 0; i < count; i++) idx[i] = i;
+            var mesh = new Mesh { name = System.IO.Path.GetFileName(name) };
+            if (count > 65000) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+            mesh.vertices = pos;
+            mesh.normals = normals;
+            mesh.triangles = idx;
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        /// <summary>
+        /// +X 面のくぼみ (面から 3〜6mm 奥の底面) の中心 (y, z)。見つからなければ全体の中心。
+        /// </summary>
+        static Vector2 FindPocket(List<Vector3> src, Vector3 min, Vector3 max)
+        {
+            float y0 = float.MaxValue, y1 = float.MinValue, z0 = float.MaxValue, z1 = float.MinValue;
+            foreach (Vector3 p in src)
+            {
+                if (p.x < max.x - 6f || p.x > max.x - 3f || p.z < min.z + 3f || p.z > max.z - 3f) continue;
+                y0 = Mathf.Min(y0, p.y);
+                y1 = Mathf.Max(y1, p.y);
+                z0 = Mathf.Min(z0, p.z);
+                z1 = Mathf.Max(z1, p.z);
+            }
+            if (y0 > y1) return new Vector2((min.y + max.y) * 0.5f, (min.z + max.z) * 0.5f);
+            return new Vector2((y0 + y1) * 0.5f, (z0 + z1) * 0.5f);
+        }
+
+        static Vector3Int Key(Vector3 p) => new Vector3Int(Mathf.RoundToInt(p.x * 1000f), Mathf.RoundToInt(p.y * 1000f), Mathf.RoundToInt(p.z * 1000f));
+    }
+}

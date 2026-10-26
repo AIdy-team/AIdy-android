@@ -1,35 +1,82 @@
-# Gradle files
+# ===== Unity =====
+# Unity が自動生成するフォルダ (プロジェクトを開けば再生成される)
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+
+# ビルド出力
+/[Bb]uild/
+/[Bb]uilds/
+
+# アセットストアツールの作業ファイル
+/[Aa]ssets/AssetStoreTools*
+
+# AR Foundation の XR Simulation がビルド中に使う一時フォルダ
+/[Aa]ssets/XR/Temp/
+/[Aa]ssets/XR/Temp.meta
+
+# IDE が自動生成するプロジェクトファイル
+.vs/
+.vsconfig
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+
+# クラッシュレポート
+sysinfo.txt
+
+# Unity が生成するビルド関連ファイル
+*.apk
+*.aab
+*.unitypackage
+*.app
+crashlytics-build.properties
+
+# Addressables / Burst のデバッグ出力
+/[Aa]ssets/[Ss]treamingAssets/aa.meta
+/[Aa]ssets/[Ss]treamingAssets/aa/*
+*_BurstDebugInformation_DoNotShip/
+
+# ===== Android (Gradle / Android Studio) =====
 .gradle/
-build/
 .kotlin/
-
-# Local configuration file (sdk path, etc)
 local.properties
-
-# Log/OS Files
 *.log
-
-# Android Studio generated files and folders
 captures/
 .externalNativeBuild/
 .cxx/
-*.aab
-*.apk
 output-metadata.json
-
-# IntelliJ
 *.iml
 .idea/
 misc.xml
 deploymentTargetDropDown.xml
 render.experimental.xml
+*.hprof
 
-# Keystore files
+# 署名鍵・秘密情報
 *.jks
 *.keystore
-
-# Google Services (e.g. APIs or Firebase)
 google-services.json
 
-# Android Profiling
-*.hprof
+# ===== OS =====
+.DS_Store
+Thumbs.db
+desktop.ini

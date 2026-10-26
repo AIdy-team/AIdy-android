@@ -1,0 +1,739 @@
+{
+  "_comment": "本体v1_モデル.obj の接続座標と外装厚さ。座標は AidyModel.BuildScaledInstance の BodyPivot を置いた親Transformのローカル座標 (Unity軸: +X=正面から見て左, +Y=上, +Z=正面)。position / innerPosition / outerPlane / innerPlane は本体の一辺=1 に正規化した値なので、targetSize (例: AidyHomeRoom.BodySize=1.1, AR=0.15) を掛けて使う。*Mm は実寸 (mm)。outerPlane / innerPlane は面の法線方向の中心からの距離。",
+  "source": "本体v1_モデル.obj",
+  "bodySizeMm": 150.0,
+  "wallThicknessMm": 5.0,
+  "wallThickness": 0.033333,
+  "edgeFilletRadiusMm": 5.0,
+  "innerCavitySizeMm": 140.0,
+  "innerCavitySize": 0.933333,
+  "occluderBoxSize": 0.932,
+  "faces": [
+    {
+      "id": "front",
+      "name": "正面",
+      "normal": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 1.0
+      },
+      "thicknessMm": 5.0,
+      "outerPlane": 0.5,
+      "innerPlane": 0.466667,
+      "outerPlaneMm": 75.0,
+      "innerPlaneMm": 70.0
+    },
+    {
+      "id": "back",
+      "name": "背面",
+      "normal": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -1.0
+      },
+      "thicknessMm": 5.0,
+      "outerPlane": 0.5,
+      "innerPlane": 0.466667,
+      "outerPlaneMm": 75.0,
+      "innerPlaneMm": 70.0
+    },
+    {
+      "id": "left",
+      "name": "左面",
+      "normal": {
+        "x": 1.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "thicknessMm": 5.0,
+      "outerPlane": 0.5,
+      "innerPlane": 0.466667,
+      "outerPlaneMm": 75.0,
+      "innerPlaneMm": 70.0
+    },
+    {
+      "id": "right",
+      "name": "右面",
+      "normal": {
+        "x": -1.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "thicknessMm": 5.0,
+      "outerPlane": 0.5,
+      "innerPlane": 0.466667,
+      "outerPlaneMm": 75.0,
+      "innerPlaneMm": 70.0
+    },
+    {
+      "id": "top",
+      "name": "上面",
+      "normal": {
+        "x": 0.0,
+        "y": 1.0,
+        "z": 0.0
+      },
+      "thicknessMm": 5.0,
+      "outerPlane": 0.5,
+      "innerPlane": 0.466667,
+      "outerPlaneMm": 75.0,
+      "innerPlaneMm": 70.0
+    },
+    {
+      "id": "bottom",
+      "name": "底面",
+      "normal": {
+        "x": 0.0,
+        "y": -1.0,
+        "z": 0.0
+      },
+      "thicknessMm": 5.0,
+      "outerPlane": 0.5,
+      "innerPlane": 0.466667,
+      "outerPlaneMm": 75.0,
+      "innerPlaneMm": 70.0
+    }
+  ],
+  "features": [
+    {
+      "id": "monitor",
+      "name": "顔モニター開口",
+      "face": "front",
+      "type": "rect_opening",
+      "position": {
+        "x": 0.0,
+        "y": 0.083333,
+        "z": 0.5
+      },
+      "innerPosition": {
+        "x": 0.0,
+        "y": 0.083333,
+        "z": 0.466667
+      },
+      "positionMm": {
+        "x": 0.0,
+        "y": 12.5,
+        "z": 75.0
+      },
+      "innerPositionMm": {
+        "x": 0.0,
+        "y": 12.5,
+        "z": 70.0
+      },
+      "normal": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 1.0
+      },
+      "longAxis": {
+        "x": -1.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "widthMm": 84,
+      "heightMm": 55,
+      "depthMm": 5.0,
+      "cornerRadiusMm": 0
+    },
+    {
+      "id": "camera",
+      "name": "カメラ穴",
+      "face": "front",
+      "type": "circle_hole",
+      "position": {
+        "x": 0.0,
+        "y": 0.376667,
+        "z": 0.5
+      },
+      "innerPosition": {
+        "x": 0.0,
+        "y": 0.376667,
+        "z": 0.466667
+      },
+      "positionMm": {
+        "x": 0.0,
+        "y": 56.5,
+        "z": 75.0
+      },
+      "innerPositionMm": {
+        "x": 0.0,
+        "y": 56.5,
+        "z": 70.0
+      },
+      "normal": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 1.0
+      },
+      "longAxis": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "widthMm": 5,
+      "heightMm": 5,
+      "depthMm": 5.0,
+      "cornerRadiusMm": 2.5
+    },
+    {
+      "id": "mic",
+      "name": "マイク穴",
+      "face": "front",
+      "type": "rect_slit",
+      "position": {
+        "x": 0.0,
+        "y": -0.163333,
+        "z": 0.5
+      },
+      "innerPosition": {
+        "x": 0.0,
+        "y": -0.163333,
+        "z": 0.466667
+      },
+      "positionMm": {
+        "x": 0.0,
+        "y": -24.5,
+        "z": 75.0
+      },
+      "innerPositionMm": {
+        "x": 0.0,
+        "y": -24.5,
+        "z": 70.0
+      },
+      "normal": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 1.0
+      },
+      "longAxis": {
+        "x": -1.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "widthMm": 4,
+      "heightMm": 1,
+      "depthMm": 5.0,
+      "cornerRadiusMm": 0
+    },
+    {
+      "id": "back_1",
+      "name": "背面スロット",
+      "face": "back",
+      "type": "slot",
+      "position": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -0.5
+      },
+      "innerPosition": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -0.466667
+      },
+      "positionMm": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -75.0
+      },
+      "innerPositionMm": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -70.0
+      },
+      "normal": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -1.0
+      },
+      "longAxis": {
+        "x": -1.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "widthMm": 28.8,
+      "heightMm": 3,
+      "depthMm": 5.0,
+      "cornerRadiusMm": 1.5
+    },
+    {
+      "id": "left_1",
+      "name": "左面スロット",
+      "face": "left",
+      "type": "slot",
+      "position": {
+        "x": 0.5,
+        "y": 0.266667,
+        "z": 0.0
+      },
+      "innerPosition": {
+        "x": 0.466667,
+        "y": 0.266667,
+        "z": 0.0
+      },
+      "positionMm": {
+        "x": 75.0,
+        "y": 40.0,
+        "z": 0.0
+      },
+      "innerPositionMm": {
+        "x": 70.0,
+        "y": 40.0,
+        "z": 0.0
+      },
+      "normal": {
+        "x": 1.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "longAxis": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -1.0
+      },
+      "widthMm": 28.8,
+      "heightMm": 3,
+      "depthMm": 5.0,
+      "cornerRadiusMm": 1.5
+    },
+    {
+      "id": "left_2",
+      "name": "左面スロット",
+      "face": "left",
+      "type": "slot",
+      "position": {
+        "x": 0.5,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "innerPosition": {
+        "x": 0.466667,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "positionMm": {
+        "x": 75.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "innerPositionMm": {
+        "x": 70.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "normal": {
+        "x": 1.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "longAxis": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -1.0
+      },
+      "widthMm": 28.8,
+      "heightMm": 3,
+      "depthMm": 5.0,
+      "cornerRadiusMm": 1.5
+    },
+    {
+      "id": "left_3",
+      "name": "左面スロット",
+      "face": "left",
+      "type": "slot",
+      "position": {
+        "x": 0.5,
+        "y": -0.266667,
+        "z": 0.0
+      },
+      "innerPosition": {
+        "x": 0.466667,
+        "y": -0.266667,
+        "z": 0.0
+      },
+      "positionMm": {
+        "x": 75.0,
+        "y": -40.0,
+        "z": 0.0
+      },
+      "innerPositionMm": {
+        "x": 70.0,
+        "y": -40.0,
+        "z": 0.0
+      },
+      "normal": {
+        "x": 1.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "longAxis": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -1.0
+      },
+      "widthMm": 28.8,
+      "heightMm": 3,
+      "depthMm": 5.0,
+      "cornerRadiusMm": 1.5
+    },
+    {
+      "id": "right_1",
+      "name": "右面スロット",
+      "face": "right",
+      "type": "slot",
+      "position": {
+        "x": -0.5,
+        "y": 0.266667,
+        "z": 0.0
+      },
+      "innerPosition": {
+        "x": -0.466667,
+        "y": 0.266667,
+        "z": 0.0
+      },
+      "positionMm": {
+        "x": -75.0,
+        "y": 40.0,
+        "z": 0.0
+      },
+      "innerPositionMm": {
+        "x": -70.0,
+        "y": 40.0,
+        "z": 0.0
+      },
+      "normal": {
+        "x": -1.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "longAxis": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -1.0
+      },
+      "widthMm": 28.8,
+      "heightMm": 3,
+      "depthMm": 5.0,
+      "cornerRadiusMm": 1.5
+    },
+    {
+      "id": "right_2",
+      "name": "右面スロット",
+      "face": "right",
+      "type": "slot",
+      "position": {
+        "x": -0.5,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "innerPosition": {
+        "x": -0.466667,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "positionMm": {
+        "x": -75.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "innerPositionMm": {
+        "x": -70.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "normal": {
+        "x": -1.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "longAxis": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -1.0
+      },
+      "widthMm": 28.8,
+      "heightMm": 3,
+      "depthMm": 5.0,
+      "cornerRadiusMm": 1.5
+    },
+    {
+      "id": "right_3",
+      "name": "右面スロット",
+      "face": "right",
+      "type": "slot",
+      "position": {
+        "x": -0.5,
+        "y": -0.266667,
+        "z": 0.0
+      },
+      "innerPosition": {
+        "x": -0.466667,
+        "y": -0.266667,
+        "z": 0.0
+      },
+      "positionMm": {
+        "x": -75.0,
+        "y": -40.0,
+        "z": 0.0
+      },
+      "innerPositionMm": {
+        "x": -70.0,
+        "y": -40.0,
+        "z": 0.0
+      },
+      "normal": {
+        "x": -1.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "longAxis": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -1.0
+      },
+      "widthMm": 28.8,
+      "heightMm": 3,
+      "depthMm": 5.0,
+      "cornerRadiusMm": 1.5
+    },
+    {
+      "id": "top_1",
+      "name": "上面スロット",
+      "face": "top",
+      "type": "slot",
+      "position": {
+        "x": 0.266667,
+        "y": 0.5,
+        "z": 0.0
+      },
+      "innerPosition": {
+        "x": 0.266667,
+        "y": 0.466667,
+        "z": 0.0
+      },
+      "positionMm": {
+        "x": 40.0,
+        "y": 75.0,
+        "z": 0.0
+      },
+      "innerPositionMm": {
+        "x": 40.0,
+        "y": 70.0,
+        "z": 0.0
+      },
+      "normal": {
+        "x": 0.0,
+        "y": 1.0,
+        "z": 0.0
+      },
+      "longAxis": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -1.0
+      },
+      "widthMm": 28.8,
+      "heightMm": 3,
+      "depthMm": 5.0,
+      "cornerRadiusMm": 1.5
+    },
+    {
+      "id": "top_2",
+      "name": "上面スロット",
+      "face": "top",
+      "type": "slot",
+      "position": {
+        "x": 0.0,
+        "y": 0.5,
+        "z": 0.0
+      },
+      "innerPosition": {
+        "x": 0.0,
+        "y": 0.466667,
+        "z": 0.0
+      },
+      "positionMm": {
+        "x": 0.0,
+        "y": 75.0,
+        "z": 0.0
+      },
+      "innerPositionMm": {
+        "x": 0.0,
+        "y": 70.0,
+        "z": 0.0
+      },
+      "normal": {
+        "x": 0.0,
+        "y": 1.0,
+        "z": 0.0
+      },
+      "longAxis": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -1.0
+      },
+      "widthMm": 28.8,
+      "heightMm": 3,
+      "depthMm": 5.0,
+      "cornerRadiusMm": 1.5
+    },
+    {
+      "id": "top_3",
+      "name": "上面スロット",
+      "face": "top",
+      "type": "slot",
+      "position": {
+        "x": -0.266667,
+        "y": 0.5,
+        "z": 0.0
+      },
+      "innerPosition": {
+        "x": -0.266667,
+        "y": 0.466667,
+        "z": 0.0
+      },
+      "positionMm": {
+        "x": -40.0,
+        "y": 75.0,
+        "z": 0.0
+      },
+      "innerPositionMm": {
+        "x": -40.0,
+        "y": 70.0,
+        "z": 0.0
+      },
+      "normal": {
+        "x": 0.0,
+        "y": 1.0,
+        "z": 0.0
+      },
+      "longAxis": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -1.0
+      },
+      "widthMm": 28.8,
+      "heightMm": 3,
+      "depthMm": 5.0,
+      "cornerRadiusMm": 1.5
+    },
+    {
+      "id": "bottom_1",
+      "name": "底面スロット",
+      "face": "bottom",
+      "type": "slot",
+      "position": {
+        "x": 0.266667,
+        "y": -0.5,
+        "z": 0.0
+      },
+      "innerPosition": {
+        "x": 0.266667,
+        "y": -0.466667,
+        "z": 0.0
+      },
+      "positionMm": {
+        "x": 40.0,
+        "y": -75.0,
+        "z": 0.0
+      },
+      "innerPositionMm": {
+        "x": 40.0,
+        "y": -70.0,
+        "z": 0.0
+      },
+      "normal": {
+        "x": 0.0,
+        "y": -1.0,
+        "z": 0.0
+      },
+      "longAxis": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -1.0
+      },
+      "widthMm": 28.8,
+      "heightMm": 3,
+      "depthMm": 5.0,
+      "cornerRadiusMm": 1.5
+    },
+    {
+      "id": "bottom_2",
+      "name": "底面スロット",
+      "face": "bottom",
+      "type": "slot",
+      "position": {
+        "x": 0.0,
+        "y": -0.5,
+        "z": 0.0
+      },
+      "innerPosition": {
+        "x": 0.0,
+        "y": -0.466667,
+        "z": 0.0
+      },
+      "positionMm": {
+        "x": 0.0,
+        "y": -75.0,
+        "z": 0.0
+      },
+      "innerPositionMm": {
+        "x": 0.0,
+        "y": -70.0,
+        "z": 0.0
+      },
+      "normal": {
+        "x": 0.0,
+        "y": -1.0,
+        "z": 0.0
+      },
+      "longAxis": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -1.0
+      },
+      "widthMm": 28.8,
+      "heightMm": 3,
+      "depthMm": 5.0,
+      "cornerRadiusMm": 1.5
+    },
+    {
+      "id": "bottom_3",
+      "name": "底面スロット",
+      "face": "bottom",
+      "type": "slot",
+      "position": {
+        "x": -0.266667,
+        "y": -0.5,
+        "z": 0.0
+      },
+      "innerPosition": {
+        "x": -0.266667,
+        "y": -0.466667,
+        "z": 0.0
+      },
+      "positionMm": {
+        "x": -40.0,
+        "y": -75.0,
+        "z": 0.0
+      },
+      "innerPositionMm": {
+        "x": -40.0,
+        "y": -70.0,
+        "z": 0.0
+      },
+      "normal": {
+        "x": 0.0,
+        "y": -1.0,
+        "z": 0.0
+      },
+      "longAxis": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -1.0
+      },
+      "widthMm": 28.8,
+      "heightMm": 3,
+      "depthMm": 5.0,
+      "cornerRadiusMm": 1.5
+    }
+  ]
+}
