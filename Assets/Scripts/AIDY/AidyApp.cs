@@ -21,8 +21,10 @@ namespace Aidy
         const float TabBarHeight = 64f;
 
         const int PageHome = 0, PageDiary = 1, PageRemote = 2, PageAR = 3, PageSettings = 4;
-        static readonly string[] TabLabels = { "ホーム", "日記", "リモコン", "AR", "設定" };
-        static readonly IconId[] TabIcons = { IconId.Aidy, IconId.Book, IconId.Gamepad, IconId.Camera, IconId.Sliders };
+        const int PageCount = 5;
+        // 設定はタブバーに出さず、ヘッダーのギアアイコンからのみ開く
+        static readonly string[] TabLabels = { "ホーム", "日記", "リモコン", "AR" };
+        static readonly IconId[] TabIcons = { IconId.Aidy, IconId.Book, IconId.Gamepad, IconId.Camera };
 
         Canvas canvas;
         RectTransform safeRoot;
@@ -355,7 +357,7 @@ namespace Aidy
             vp.gameObject.AddComponent<RectMask2D>();
 
             var content = UI.Rect("ScrollContent", vp);
-            var pages = new RectTransform[TabLabels.Length];
+            var pages = new RectTransform[PageCount];
             for (int i = 0; i < pages.Length; i++) pages[i] = UI.Rect("Page" + i, content);
 
             pager = vp.gameObject.AddComponent<AidyPager>();
@@ -685,6 +687,14 @@ namespace Aidy
             UI.Icon(card, IconId.Check, 14, Theme.Green);
             card = Card(c, null, default, default, "スピーカー音量", "効果音 & 音声応答");
             UI.Label(card, "60%", 13, Theme.Primary, true);
+
+            SectionTitle(c, "日記", false);
+            card = Card(c, null, default, default, "カレンダー表示", "週表示に切り替える");
+            AidySwitch.Create(card, CalendarSettings.WeekView).OnChanged = on =>
+            {
+                CalendarSettings.WeekView = on;
+                diary.SetWeekView(on);
+            };
 
             SectionTitle(c, "操作 & ネットワーク", false);
             card = Card(c, null, default, default, "モジュール自動合体", "パーツSocketアタッチ機能 (ON)");
