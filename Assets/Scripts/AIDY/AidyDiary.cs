@@ -295,6 +295,22 @@ namespace Aidy
         }
     }
 
+    /// <summary>日記カレンダーの表示設定 (月表示 / 週表示)。設定画面から切り替える。</summary>
+    public static class CalendarSettings
+    {
+        const string WeekViewKey = "aidy.calendar.weekView";
+
+        public static bool WeekView
+        {
+            get => PlayerPrefs.GetInt(WeekViewKey, 0) == 1;
+            set
+            {
+                PlayerPrefs.SetInt(WeekViewKey, value ? 1 : 0);
+                PlayerPrefs.Save();
+            }
+        }
+    }
+
     /// <summary>本体連携が完成するまでカレンダーの見た目を確認するためのサンプル日記 (「サンプル」表示付き)。</summary>
     public static class DiaryDemo
     {
