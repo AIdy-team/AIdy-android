@@ -20,10 +20,13 @@ namespace Aidy
         static readonly Color Saturday = Theme.Hex(0x3b82f6);
 
         DateTime month;     // 表示中の月 (1日)
+        DateTime weekAnchor; // 表示中の週の日曜日
         DateTime selected;
+        bool weekView;
         bool syncing, autoSynced, logsOpen;
 
         TMP_Text monthLabel, syncText, syncButtonText;
+        NavButton nextNav;
         AidyMascot headerMascot;
         RectTransform entryRoot;
         readonly List<RectTransform> weekRows = new List<RectTransform>();
@@ -36,7 +39,9 @@ namespace Aidy
             DiaryDemo.SeedIfNeeded();
             var p = page.gameObject.AddComponent<AidyDiaryPage>();
             p.selected = DateTime.Today;
+            p.weekView = CalendarSettings.WeekView;
             p.month = new DateTime(p.selected.Year, p.selected.Month, 1);
+            p.weekAnchor = p.selected.AddDays(-(int)p.selected.DayOfWeek);
 
             p.BuildHeader(content);
             UI.Spacer(content, 14);
@@ -56,6 +61,16 @@ namespace Aidy
             if (autoSynced) return;
             autoSynced = true;
             StartSync(true);
+        }
+
+        /// <summary>設定画面から月表示/週表示を切り替える。</summary>
+        public void SetWeekView(bool on)
+        {
+            if (weekView == on) return;
+            weekView = on;
+            month = new DateTime(selected.Year, selected.Month, 1);
+            weekAnchor = selected.AddDays(-(int)selected.DayOfWeek);
+            RefreshCalendar();
         }
 
         /// <summary>検証用: いちばん新しい日記を選んで会話ログを開く。</summary>
@@ -104,10 +119,11 @@ namespace Aidy
             var head = UI.Rect("MonthHeader", cal);
             head.HLayout(0, 0, 0, 0, 0, TextAnchor.MiddleCenter);
             head.Layout(-1, 36);
-            MonthButton(head, IconId.ChevronLeft).OnClick = () => ShiftMonth(-1);
+            MonthButton(head, IconId.ChevronLeft).Click.OnClick = () => ShiftPeriod(-1);
             monthLabel = UI.Label(head, "", 15, Theme.TextMain, true, TextAnchor.MiddleCenter);
             monthLabel.Layout(-1, -1, 1);
-            MonthButton(head, IconId.ChevronRight).OnClick = () => ShiftMonth(1);
+            nextNav = MonthButton(head, IconId.ChevronRight);
+            nextNav.Click.OnClick = () => ShiftPeriod(1);
 
             UI.Spacer(cal, 6);
             var week = UI.Rect("WeekLabels", cal);
@@ -129,7 +145,9 @@ namespace Aidy
             }
         }
 
-        static Clickable MonthButton(RectTransform parent, IconId icon)
+        struct NavButton { public Clickable Click; public CanvasGroup Group; }
+
+        static NavButton MonthButton(RectTransform parent, IconId icon)
         {
             var b = UI.Rect("MonthButton", parent);
             b.Layout(36, 36);
@@ -137,7 +155,14 @@ namespace Aidy
             UI.Icon(b, icon, 12, Theme.Slate600).rectTransform.Pin(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(12, 12));
             var c = b.gameObject.AddComponent<Clickable>();
             c.PressScale = 0.92f;
-            return c;
+            var g = b.gameObject.AddComponent<CanvasGroup>();
+            return new NavButton { Click = c, Group = g };
+        }
+
+        static void SetNavEnabled(NavButton n, bool enabled)
+        {
+            n.Click.Interactable = enabled;
+            n.Group.alpha = enabled ? 1f : 0.35f;
         }
 
         DayCell CreateCell(RectTransform row)
@@ -159,21 +184,38 @@ namespace Aidy
             return cell;
         }
 
-        void ShiftMonth(int delta)
+        void ShiftPeriod(int delta)
         {
-            month = month.AddMonths(delta);
+            if (delta > 0 && !CanGoForward()) return;
+            if (weekView) weekAnchor = weekAnchor.AddDays(7 * delta);
+            else month = month.AddMonths(delta);
             RefreshCalendar();
+        }
+
+        /// <summary>日記は現在までしか書けないので、今日を含む月/週より先には進めない。</summary>
+        bool CanGoForward()
+        {
+            DateTime today = DateTime.Today;
+            if (weekView) return weekAnchor < today.AddDays(-(int)today.DayOfWeek);
+            return month < new DateTime(today.Year, today.Month, 1);
         }
 
         void Select(DateTime date)
         {
             selected = date.Date;
             month = new DateTime(selected.Year, selected.Month, 1);
+            weekAnchor = selected.AddDays(-(int)selected.DayOfWeek);
             RefreshCalendar();
             RefreshEntry();
         }
 
         void RefreshCalendar()
+        {
+            if (weekView) RefreshWeekView();
+            else RefreshMonthView();
+        }
+
+        void RefreshMonthView()
         {
             monthLabel.text = $"{month.Year}年{month.Month}月";
             int offset = (int)month.DayOfWeek;
@@ -181,38 +223,63 @@ namespace Aidy
             int rows = Mathf.CeilToInt((offset + days) / 7f);
             for (int r = 0; r < weekRows.Count; r++) weekRows[r].gameObject.SetActive(r < rows);
 
-            DateTime today = DateTime.Today;
             for (int i = 0; i < cells.Count; i++)
             {
-                DayCell cell = cells[i];
                 int day = i - offset + 1;
-                if (day < 1 || day > days)
-                {
-                    cell.Num.text = "";
-                    cell.Bg.color = Color.clear;
-                    cell.Face.enabled = false;
-                    cell.Click.Interactable = false;
-                    continue;
-                }
-
-                DateTime date = new DateTime(month.Year, month.Month, day);
-                cell.Date = date;
-                cell.Click.Interactable = true;
-                DiaryEntry entry = DiaryStore.Get(date);
-                bool sel = date == selected, isToday = date == today;
-                int dow = (int)date.DayOfWeek;
-
-                cell.Bg.color = sel ? Theme.Primary : isToday ? Theme.PrimaryLight : Color.clear;
-                cell.Num.text = day.ToString();
-                cell.Num.color = sel ? Color.white
-                    : isToday ? Theme.Primary
-                    : date > today ? Theme.Slate300
-                    : dow == 0 ? Sunday
-                    : dow == 6 ? Saturday
-                    : Theme.TextMain;
-                cell.Face.enabled = entry != null;
-                if (entry != null) cell.Face.sprite = AidyMascotArt.Get(DiaryComposer.FaceFor(entry.mood), 16);
+                if (day < 1 || day > days) ClearCell(cells[i]);
+                else ApplyCell(cells[i], new DateTime(month.Year, month.Month, day));
             }
+            SetNavEnabled(nextNav, CanGoForward());
+        }
+
+        void RefreshWeekView()
+        {
+            DateTime weekEnd = weekAnchor.AddDays(6);
+            monthLabel.text = WeekRangeLabel(weekAnchor, weekEnd);
+            for (int r = 0; r < weekRows.Count; r++) weekRows[r].gameObject.SetActive(r == 0);
+
+            for (int i = 0; i < cells.Count; i++)
+            {
+                if (i >= 7) ClearCell(cells[i]);
+                else ApplyCell(cells[i], weekAnchor.AddDays(i));
+            }
+            SetNavEnabled(nextNav, CanGoForward());
+        }
+
+        static string WeekRangeLabel(DateTime start, DateTime end)
+        {
+            if (start.Year != end.Year) return $"{start.Year}/{start.Month}/{start.Day} 〜 {end.Year}/{end.Month}/{end.Day}";
+            if (start.Month != end.Month) return $"{start.Year}年{start.Month}月{start.Day}日 〜 {end.Month}月{end.Day}日";
+            return $"{start.Year}年{start.Month}月{start.Day}日 〜 {end.Day}日";
+        }
+
+        static void ClearCell(DayCell cell)
+        {
+            cell.Num.text = "";
+            cell.Bg.color = Color.clear;
+            cell.Face.enabled = false;
+            cell.Click.Interactable = false;
+        }
+
+        void ApplyCell(DayCell cell, DateTime date)
+        {
+            cell.Date = date;
+            DateTime today = DateTime.Today;
+            cell.Click.Interactable = date <= today; // 日記は今日までしか書けない
+            DiaryEntry entry = DiaryStore.Get(date);
+            bool sel = date == selected, isToday = date == today;
+            int dow = (int)date.DayOfWeek;
+
+            cell.Bg.color = sel ? Theme.Primary : isToday ? Theme.PrimaryLight : Color.clear;
+            cell.Num.text = date.Day.ToString();
+            cell.Num.color = sel ? Color.white
+                : isToday ? Theme.Primary
+                : date > today ? Theme.Slate300
+                : dow == 0 ? Sunday
+                : dow == 6 ? Saturday
+                : Theme.TextMain;
+            cell.Face.enabled = entry != null;
+            if (entry != null) cell.Face.sprite = AidyMascotArt.Get(DiaryComposer.FaceFor(entry.mood), 16);
         }
 
         // ---------------------------------------------------------------- Entry
