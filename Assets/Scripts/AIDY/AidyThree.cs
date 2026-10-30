@@ -226,12 +226,12 @@ namespace Aidy
     /// <summary>
     /// 本体モデル (.obj + .mtl) の読み込み。WebDemo の buildScaledInstance と同じく
     /// 「中心を原点へ → 最大辺が targetSize になるよう一括スケール → X軸 -90° 回転」で配置する。
-    /// 本体v1_顔あり (顔パーツ装着時のメイン) と 本体v1_モデル (顔なし) の2種類がある。
+    /// 本体v2_顔あり (顔パーツ装着時のメイン) と 本体v2_モデル (顔なし) の2種類がある。
     /// </summary>
     public static class AidyModel
     {
-        public const string BodyPath = "AIDY/本体v1_モデル";
-        public const string BodyWithFacePath = "AIDY/本体v1_顔あり";
+        public const string BodyPath = "AIDY/本体v2_モデル";
+        public const string BodyWithFacePath = "AIDY/本体v2_顔あり";
 
         static readonly Dictionary<string, GameObject> sources = new Dictionary<string, GameObject>();
 
@@ -307,7 +307,7 @@ namespace Aidy
                 if (Plain != null) AddInteriorOccluder(Plain, targetSize, layer);
             }
 
-            /// <summary>顔あり: 本体v1_顔あり / 顔なし: 本体v1_モデル。戻り値は顔ありモデルを表示したか。</summary>
+            /// <summary>顔あり: 本体v2_顔あり / 顔なし: 本体v2_モデル。戻り値は顔ありモデルを表示したか。</summary>
             public bool SetFace(bool on)
             {
                 bool useFace = on && WithFace != null;
@@ -319,7 +319,7 @@ namespace Aidy
 
         /// <summary>
         /// 外装 (外形150mm・厚さ5mm) の内側の空洞 (140mm) を黒い箱で埋め、穴から中身が見えないようにする。
-        /// 寸法は docs/本体モデルv1解析.txt: 内壁 (±70mm) とのちらつきを防ぐため 139.8mm の箱を中心に置く。
+        /// 寸法は Resources/AIDY/body_v2_layout.json: 内壁 (±70mm) とのちらつきを防ぐため 139.8mm の箱を中心に置く。
         /// </summary>
         public static void AddInteriorOccluder(Transform pivot, float targetSize, int layer)
         {

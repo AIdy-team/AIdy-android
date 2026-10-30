@@ -1,0 +1,7 @@
+# 本体v2 の材質 (3mf の色 #A0A0A0 = 鋼サテン、顔パネル = 白エナメル)
+
+newmtl SteelSatin
+Kd 0.627451 0.627451 0.627451
+
+newmtl EnamelWhite
+Kd 0.964706 0.964706 0.952941

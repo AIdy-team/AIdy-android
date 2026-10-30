@@ -5,7 +5,7 @@ namespace Aidy
 {
     /// <summary>
     /// 本体 (顔あり/顔なし) + ModuleConfig のモジュールを 3D で組み立てる。ホーム・付け替えプレビュー・AR で共通。
-    /// 寸法は docs/本体モデルv1解析.txt: 本体 150mm 角 = size (シーン単位)。
+    /// 寸法は Resources/AIDY/body_v2_layout.json: 本体 150mm 角 = size (シーン単位)。
     /// editable のときは、面の選択ハイライトとスロットの目印 (ドロップ先) も作る。
     /// </summary>
     public class AidyModuleRig
@@ -13,6 +13,7 @@ namespace Aidy
         const string EarModel = "AIDY/耳_stl";
         const string HandModel = "AIDY/手_短い_3mf";
         const string HandLightModel = "AIDY/手_短い_懐中電灯_3mf";
+        const string TailModel = "AIDY/tail_stl";
 
         public readonly Transform Body;
         public readonly AidyModel.Variants Bodies;
@@ -89,7 +90,7 @@ namespace Aidy
                 var root = new GameObject(kv.Value.ToString());
                 root.transform.SetParent(f.T, false);
                 var m = new Mount { Kind = kv.Value, Root = root };
-                BuildModule(m);
+                BuildModule(m, f.Slot);
                 Three.SetLayer(root, layer);
                 mounts[kv.Key] = m;
             }
@@ -100,7 +101,7 @@ namespace Aidy
 
         // ------------------------------------------------------------ モジュールの形 (取り付け面ローカル: +Y=外向き, +Z=正面 or 上)
 
-        void BuildModule(Mount m)
+        void BuildModule(Mount m, BodySlot slot)
         {
             Transform f = m.Root.transform;
             switch (m.Kind)
@@ -151,15 +152,28 @@ namespace Aidy
                 }
                 case ModuleKind.Tail:
                 {
-                    // 根元で左右に振る (wag) → 少し持ち上げる (tilt) → 棒
+                    // 根元で左右に振る (wag)。tail.stl は差し込み部をスロットに入れ、+Z (背面なら上) へ反る
                     var wag = new GameObject("TailWag").transform;
                     wag.SetParent(f, false);
-                    var tilt = new GameObject("TailTilt").transform;
-                    tilt.SetParent(wag, false);
-                    tilt.localRotation = Quaternion.AngleAxis(35f, Vector3.right);
-                    var go = AidyMeshes.Create("Tail", tilt, AidyMeshes.Cylinder(0.03f * k, 0.04f * k, 0.45f * k, 16), satin, true, true);
-                    go.transform.localPosition = new Vector3(0, 0.2f * k, 0);
                     m.Swing.Add(wag);
+                    Mesh tail = AidyModelLoader.Load(TailModel, MountAxis.SlotTabPlusY);
+                    if (tail != null)
+                    {
+                        var go = AidyMeshes.Create("Tail", wag, tail, satin, true, true);
+                        go.transform.localScale = Vector3.one * mm;
+                        // 差し込み部の長手 (モデルの X) をスロットの長手に合わせる。上面のスロットは前後向きなので横へ反る
+                        Vector3 longLocal = Quaternion.Inverse(slot.MountRotation) * slot.LongAxis;
+                        if (Mathf.Abs(longLocal.z) > 0.5f) go.transform.localRotation = Quaternion.AngleAxis(90f, Vector3.up);
+                    }
+                    else
+                    {
+                        // モデルがなければ少し持ち上げた棒
+                        var tilt = new GameObject("TailTilt").transform;
+                        tilt.SetParent(wag, false);
+                        tilt.localRotation = Quaternion.AngleAxis(35f, Vector3.right);
+                        var go = AidyMeshes.Create("Tail", tilt, AidyMeshes.Cylinder(0.03f * k, 0.04f * k, 0.45f * k, 16), satin, true, true);
+                        go.transform.localPosition = new Vector3(0, 0.2f * k, 0);
+                    }
                     break;
                 }
                 case ModuleKind.Legs:

@@ -16,7 +16,7 @@ using UnityEngine.Android;
 namespace Aidy
 {
     /// <summary>
-    /// AR 画面。ARCore が使える端末では AR Foundation で床/机の平面に本体v1_モデルを配置し、
+    /// AR 画面。ARCore が使える端末では AR Foundation で床/机の平面に本体v2_モデルを配置し、
     /// 使えない場合 (非対応端末・エディタ・PC) は WebDemo と同じく
     /// 「カメラ映像の上にタップした位置を基準に配置」する方式で動作する。
     /// 表示するモデルは ModuleConfig のモジュール付き (付け替えはタブの「画面上」で行う)。
@@ -228,11 +228,11 @@ namespace Aidy
                 {
                     WebcamImage.texture = webcam;
                     WebcamImage.enabled = true;
-                    SetStatus?.Invoke(IconId.Circle, Theme.Green, 10, "Webカメラ動作中 (本体v1配置)");
+                    SetStatus?.Invoke(IconId.Circle, Theme.Green, 10, "Webカメラ動作中 (本体v2配置)");
                     yield break;
                 }
             }
-            SetStatus?.Invoke(IconId.HandPointer, Color.white, 12, "クリックした場所を基準に本体v1配置");
+            SetStatus?.Invoke(IconId.HandPointer, Color.white, 12, "クリックした場所を基準に本体v2配置");
         }
 
         // ------------------------------------------------------------ 実機 AR (AR Foundation + ARCore)
@@ -311,7 +311,7 @@ namespace Aidy
 
         void BuildPlacedModel()
         {
-            placedRoot = new GameObject("AR_Placed_本体v1").transform;
+            placedRoot = new GameObject("AR_Placed_本体v2").transform;
             placedRoot.gameObject.SetActive(false);
 
             placedModel = new GameObject("Model").transform;
@@ -361,8 +361,8 @@ namespace Aidy
             placedRoot.SetPositionAndRotation(pose.position, Quaternion.identity);
             if (center) placedYaw = 0f;
             SetPosition?.Invoke(center
-                ? $"基準位置: ({pose.position.x:F2}, {pose.position.z:F2}) 本体v1中央配置"
-                : $"基準位置: ({pose.position.x:F2}, {pose.position.z:F2}) 本体v1配置完了");
+                ? $"基準位置: ({pose.position.x:F2}, {pose.position.z:F2}) 本体v2中央配置"
+                : $"基準位置: ({pose.position.x:F2}, {pose.position.z:F2}) 本体v2配置完了");
         }
 
         // ------------------------------------------------------------ 入力 (AidyARTouch から)
@@ -412,7 +412,7 @@ namespace Aidy
             arCube.Apply();
             targetRing.P = new Vector3(tx, ty - 0.5f, 0);
             targetRing.Apply();
-            SetPosition?.Invoke($"基準位置: ({tx:F2}, {ty:F2}) 本体v1配置完了");
+            SetPosition?.Invoke($"基準位置: ({tx:F2}, {ty:F2}) 本体v2配置完了");
         }
 
         public void ResetPosition()
@@ -428,7 +428,7 @@ namespace Aidy
             arCube.Apply();
             targetRing.P = new Vector3(0, -0.6f, 0);
             targetRing.Apply();
-            SetPosition?.Invoke("基準位置: (0.00, 0.00) 本体v1中央配置");
+            SetPosition?.Invoke("基準位置: (0.00, 0.00) 本体v2中央配置");
         }
 
         // ------------------------------------------------------------ 毎フレーム
@@ -465,7 +465,7 @@ namespace Aidy
             {
                 lastState = ARSession.state;
                 if (lastState == ARSessionState.SessionTracking)
-                    SetStatus?.Invoke(IconId.Circle, Theme.Green, 10, "ARカメラ動作中 (床や机をタップして本体v1配置)");
+                    SetStatus?.Invoke(IconId.Circle, Theme.Green, 10, "ARカメラ動作中 (床や机をタップして本体v2配置)");
                 else if (lastState == ARSessionState.SessionInitializing)
                     SetStatus?.Invoke(IconId.HandPointer, Color.white, 12, "端末をゆっくり動かして床や机を認識中…");
             }

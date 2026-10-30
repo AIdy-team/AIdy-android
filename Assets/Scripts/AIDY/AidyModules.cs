@@ -223,7 +223,7 @@ namespace Aidy
     }
 
     /// <summary>
-    /// Resources/AIDY/body_v1_layout.json (docs/本体モデルv1解析.txt と同じ寸法) から取り付け口を読み込む。
+    /// Resources/AIDY/body_v2_layout.json (本体v2.3mf から測った寸法) から取り付け口を読み込む。
     /// </summary>
     public static class BodyLayout
     {
@@ -308,10 +308,10 @@ namespace Aidy
         static void Load()
         {
             slots = new List<BodySlot>();
-            var asset = Resources.Load<TextAsset>("AIDY/body_v1_layout");
+            var asset = Resources.Load<TextAsset>("AIDY/body_v2_layout");
             if (asset == null)
             {
-                Debug.LogWarning("[AIDY] body_v1_layout.json が見つかりません");
+                Debug.LogWarning("[AIDY] body_v2_layout.json が見つかりません");
                 return;
             }
             var file = JsonUtility.FromJson<LayoutFile>(asset.text);
@@ -349,7 +349,12 @@ namespace Aidy
         /// +X 側の面にあるマグネット用のくぼみ (スロットと同じ 28.8mm の溝) を本体に当てる。
         /// くぼみの中心を取り付け位置に、+Y 側の端を正面 (+Z) に向ける (手_短い*.3mf)。
         /// </summary>
-        MagnetPlusX
+        MagnetPlusX,
+        /// <summary>
+        /// Z 上・+Y 外向き。-Y 側の台座の底面にスロットと同じ溝 (28.8x4mm、X が長手、中心が原点の XZ) があり、
+        /// その底面を取り付け面に置いて +Z 側へ反らせる (tail.stl)。
+        /// </summary>
+        SlotTabPlusY
     }
 
     /// <summary>
@@ -514,6 +519,10 @@ namespace Aidy
                         pos[i] = new Vector3(-(p.x - cx), max.y - p.y, p.z - cz);
                         break;
                     }
+                    case MountAxis.SlotTabPlusY:
+                        // 右手系 (Z上) → Unity。台座の底面を原点 (本体の表面) にする
+                        pos[i] = new Vector3(-p.x, p.y - min.y, p.z);
+                        break;
                     default:
                         // くぼみのある +X 面が本体側 (外向き = -X)、長手方向 +Y を正面へ
                         pos[i] = new Vector3(-(p.z - pocket.y), max.x - p.x, p.y - pocket.x);

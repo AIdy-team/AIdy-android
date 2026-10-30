@@ -7,10 +7,10 @@ using UnityEngine.UI;
 namespace Aidy
 {
     /// <summary>
-    /// 3D ペットルーム + 本体v1 (ModuleConfig のモジュール付き) + 自律AI行動 + 操作への反応。
+    /// 3D ペットルーム + 本体v2 (ModuleConfig のモジュール付き) + 自律AI行動 + 操作への反応。
     /// ホーム画面 (表示のみ) と、AR タブ「画面上」の付け替えプレビュー (editable: 面をタップで選択) の2か所で使う。
     /// WebDemo の数値・状態遷移をそのまま移植している (three.js 座標は Three で変換)。
-    /// 本体の寸法・スロット位置は docs/本体モデルv1解析.txt (= Resources/AIDY/body_v1_layout.json)。
+    /// 本体の寸法・スロット位置は Resources/AIDY/body_v2_layout.json (本体v2.3mf から測った寸法)。
     /// </summary>
     public class AidyHomeRoom : MonoBehaviour
     {
@@ -466,8 +466,8 @@ namespace Aidy
         {
             // 顔モニター開口 84x55mm (中心 y=+12.5mm) の外側の面に貼る
             BodySlot monitor = BodyLayout.Get("monitor");
-            float w = (monitor != null ? monitor.WidthMm : 84f) * MmToScene;
-            float h = (monitor != null ? monitor.HeightMm : 55f) * MmToScene;
+            float w = (monitor != null ? monitor.WidthMm : 74.8f) * MmToScene;
+            float h = (monitor != null ? monitor.HeightMm : 51f) * MmToScene;
             Vector3 c = monitor != null ? monitor.Position * BodySize : new Vector3(0, 12.5f * MmToScene, BodySize * 0.5f);
             faceOverlay = AidyMeshes.Create("FaceOverlay", body.T, AidyMeshes.Plane(w, h), AidyMaterials.Basic(Color.white));
             faceOverlay.transform.localPosition = c + new Vector3(0, 0, 0.003f);
