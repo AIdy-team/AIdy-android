@@ -311,6 +311,112 @@ namespace Aidy
         }
     }
 
+    /// <summary>カレンダーに登録する予定 1 件。date は "yyyy-MM-dd"、time は "HH:mm" (空なら終日)。</summary>
+    [Serializable]
+    public class ScheduleItem
+    {
+        public string id;
+        public string date;
+        public string time;
+        public string title;
+        public string memo;
+
+        public bool AllDay => string.IsNullOrEmpty(time);
+
+        /// <summary>時刻つきの予定で、その時刻をもう過ぎているか (終日の予定は過ぎない扱い)。</summary>
+        public bool IsPast(DateTime now) => !AllDay && string.CompareOrdinal(date + " " + time, now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)) < 0;
+    }
+
+    /// <summary>予定の保存先 (persistentDataPath/schedule.json)。過去・未来どの日にも登録できる。</summary>
+    public static class ScheduleStore
+    {
+        [Serializable]
+        class FileData { public List<ScheduleItem> items = new List<ScheduleItem>(); }
+
+        static List<ScheduleItem> items;
+
+        static string FilePath => Path.Combine(Application.persistentDataPath, "schedule.json");
+
+        /// <summary>その日の予定 (終日 → 時刻順)。時刻を過ぎた予定は後ろに回し、次の予定が先頭に来るようにする。</summary>
+        public static List<ScheduleItem> For(DateTime d)
+        {
+            Load();
+            string key = DiaryStore.Key(d);
+            DateTime now = DateTime.Now;
+            var list = items.FindAll(i => i.date == key);
+            list.Sort((a, b) =>
+            {
+                bool pa = a.IsPast(now), pb = b.IsPast(now);
+                if (pa != pb) return pa ? 1 : -1;
+                if (a.AllDay != b.AllDay) return a.AllDay ? -1 : 1;
+                return string.CompareOrdinal(a.time ?? "", b.time ?? "");
+            });
+            return list;
+        }
+
+        /// <summary>id が空なら新規追加、既存 id なら上書き。</summary>
+        public static void Save(ScheduleItem item)
+        {
+            Load();
+            if (string.IsNullOrEmpty(item.id)) item.id = Guid.NewGuid().ToString("N");
+            int idx = items.FindIndex(i => i.id == item.id);
+            if (idx >= 0) items[idx] = item;
+            else items.Add(item);
+            Write();
+        }
+
+        public static void Delete(string id)
+        {
+            Load();
+            if (items.RemoveAll(i => i.id == id) > 0) Write();
+        }
+
+        /// <summary>"9:5" "0930" "9" などを "HH:mm" に揃える。空なら ""(終日)、読めなければ null。</summary>
+        public static string ParseTime(string s)
+        {
+            s = (s ?? "").Trim().Replace("：", ":");
+            if (s.Length == 0) return "";
+            int h, m = 0;
+            if (s.Contains(":"))
+            {
+                string[] p = s.Split(':');
+                if (p.Length != 2 || !int.TryParse(p[0], out h) || (p[1].Length > 0 && !int.TryParse(p[1], out m))) return null;
+            }
+            else if (!int.TryParse(s, out h)) return null;
+            else if (s.Length >= 3) { m = h % 100; h /= 100; }
+            if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+            return $"{h:00}:{m:00}";
+        }
+
+        static void Load()
+        {
+            if (items != null) return;
+            items = new List<ScheduleItem>();
+            if (!File.Exists(FilePath)) return;
+            try
+            {
+                var data = JsonUtility.FromJson<FileData>(File.ReadAllText(FilePath, Encoding.UTF8));
+                if (data?.items != null) items = data.items.FindAll(i => i != null && !string.IsNullOrEmpty(i.date));
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[AIDY] 予定の読込に失敗: {ex.Message}");
+            }
+        }
+
+        static void Write()
+        {
+            try
+            {
+                File.WriteAllText(FilePath, JsonUtility.ToJson(new FileData { items = items }, true), Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[AIDY] 予定の保存に失敗: {ex.Message}");
+            }
+        }
+    }
+
     /// <summary>本体連携が完成するまでカレンダーの見た目を確認するためのサンプル日記 (「サンプル」表示付き)。</summary>
     public static class DiaryDemo
     {
