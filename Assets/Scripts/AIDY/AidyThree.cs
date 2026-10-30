@@ -295,6 +295,8 @@ namespace Aidy
         {
             public readonly Transform WithFace;
             public readonly Transform Plain;
+            /// <summary>顔モニターの画面 (本体の faces.py と同じ顔)。顔ありモデルのときだけ表示する。</summary>
+            public readonly AidyFaceScreen Screen;
             public bool Any => WithFace != null || Plain != null;
             public bool HasFaceModel => WithFace != null;
 
@@ -305,6 +307,11 @@ namespace Aidy
                 // 外装の内側は空洞なので、モニター開口・カメラ穴・マイク穴・スロットから中身が見えないよう黒で埋める
                 if (WithFace != null) AddInteriorOccluder(WithFace, targetSize, layer);
                 if (Plain != null) AddInteriorOccluder(Plain, targetSize, layer);
+                if (WithFace != null)
+                {
+                    Screen = AidyFaceScreen.Create(parent, targetSize, layer);
+                    Screen.gameObject.SetActive(false);
+                }
             }
 
             /// <summary>顔あり: 本体v2_顔あり / 顔なし: 本体v2_モデル。戻り値は顔ありモデルを表示したか。</summary>
@@ -313,6 +320,7 @@ namespace Aidy
                 bool useFace = on && WithFace != null;
                 if (WithFace != null) WithFace.gameObject.SetActive(useFace);
                 if (Plain != null) Plain.gameObject.SetActive(!useFace);
+                if (Screen != null) Screen.gameObject.SetActive(useFace);
                 return useFace;
             }
         }

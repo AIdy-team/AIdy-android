@@ -403,12 +403,13 @@ namespace Aidy
                 case "dance": StartReaction(Reaction.Dance, 3.2f, "♪ ごきげんダンス！", AidyFace.Happy); break;
                 case "stretch": StartReaction(Reaction.Stretch, 2f, "うーん… のびのび〜", AidyFace.Sleepy); break;
                 case "sneeze": StartReaction(Reaction.Sneeze, 1.3f, "は… はっ…", AidyFace.Surprised); break;
-                case "doze": StartReaction(Reaction.Doze, 999f, "すやすや… Zzz", AidyFace.Sleepy); break;
+                case "doze": StartReaction(Reaction.Doze, 999f, "すやすや… Zzz", AidyFace.Sleepy, "sleep"); break;
                 case "dizzy": StartReaction(Reaction.Dizzy, 3.5f, "@_@ 目が回った〜", AidyFace.Dizzy); break;
             }
         }
 
-        void StartReaction(Reaction r, float seconds, string status, AidyFace face)
+        /// <summary>screenFace: 顔モニターに出す本体の表情 (null なら face から決める)。</summary>
+        void StartReaction(Reaction r, float seconds, string status, AidyFace face, string screenFace = null)
         {
             if (reaction == Reaction.Snuggle && r != Reaction.Happy) body.T.localScale = Vector3.one;
             reaction = r;
@@ -416,7 +417,7 @@ namespace Aidy
             reactionTime = 0f;
             StatusChanged?.Invoke(status);
             FaceReaction?.Invoke(face, Mathf.Min(seconds, 4f));
-            ShowFaceOverlay(face);
+            ShowFaceOverlay(face, screenFace);
             stars.SetActive(r == Reaction.Dizzy);
             zzz.SetActive(r == Reaction.Doze);
         }
@@ -441,9 +442,20 @@ namespace Aidy
             else aiTimer = 1.5f;
         }
 
-        /// <summary>顔モニターに表情を表示する (null で消して本来の顔に戻す)。</summary>
-        void ShowFaceOverlay(AidyFace? face)
+        /// <summary>
+        /// 顔モニターに表情を表示する (null で本来の顔に戻す)。顔モジュールがあれば本体と同じ顔 (AidyFaceScreen) で、
+        /// なければ開口に表情の絵を貼る。
+        /// </summary>
+        void ShowFaceOverlay(AidyFace? face, string screenFace = null)
         {
+            AidyFaceScreen screen = rig.FaceOn ? rig.Bodies.Screen : null;
+            if (screen != null)
+            {
+                faceOverlay.SetActive(false);
+                if (face == AidyFace.Blink) screen.Blink();
+                else screen.SetFace(screenFace ?? AidyFaceScreen.FromApp(face));
+                return;
+            }
             if (face == null || face == AidyFace.Normal)
             {
                 faceOverlay.SetActive(false);
@@ -875,6 +887,28 @@ namespace Aidy
             rt.Create();
             Cam.targetTexture = rt;
             target.texture = rt;
+            Cam.ResetProjectionMatrix();
+            Cam.fieldOfView = FieldOfView((float)w / h);
+            // 上下に UI が重なっている分だけ写る範囲をずらし、モデルが見えている部分の中央に来るようにする
+            float shift = (ViewInsetBottom - ViewInsetTop) * s / h;
+            if (Mathf.Abs(shift) > 1e-4f)
+            {
+                Matrix4x4 m = Cam.projectionMatrix;
+                m[1, 2] = -shift;
+                Cam.projectionMatrix = m;
+            }
+        }
+
+        /// <summary>3D ビューの上下に重なっている UI の高さ (UI の単位)。全画面表示のときに App が設定する。</summary>
+        public float ViewInsetTop, ViewInsetBottom;
+
+        /// <summary>縦の画角 45° は横幅 0.7 (縦長のカード) を想定。それより細長い画面 (全画面表示) では横が見切れないよう広げる。</summary>
+        static float FieldOfView(float aspect)
+        {
+            const float DesignAspect = 0.7f, DesignFov = 45f;
+            if (aspect >= DesignAspect) return DesignFov;
+            float halfTan = Mathf.Tan(DesignFov * 0.5f * Mathf.Deg2Rad) * DesignAspect / aspect;
+            return 2f * Mathf.Atan(halfTan) * Mathf.Rad2Deg;
         }
     }
 

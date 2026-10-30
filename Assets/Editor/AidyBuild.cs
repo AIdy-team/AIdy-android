@@ -110,15 +110,28 @@ namespace Aidy.EditorTools
         }
 
         /// <summary>
-        /// Unity は .stl / .3mf を取り込めないため、Resources/AIDY/*.stl, *.3mf を *_stl.bytes, *_3mf.bytes (TextAsset) にコピーする。
-        /// 実行時は AidyModelLoader.Load("AIDY/耳_stl", ...) のように読む。
+        /// モジュールのモデルを Resources/AIDY/*_stl.bytes, *_obj.bytes, *_3mf.bytes (TextAsset) にコピーする。
+        /// 元ファイルは Modules/ (Assets の外なので Unity は取り込まない) に .stl と .obj で置く。旧形式の Resources/AIDY/*.stl, *.3mf も読む。
+        /// 同じ名前の .stl があれば .obj はコピーしない (実行時は .stl を優先して読むため)。
+        /// 実行時は AidyModelLoader.Load("AIDY/tail2", ...) のように拡張子なしで読む。
         /// </summary>
         static void CopyStlResources()
         {
-            const string dir = "Assets/Resources/AIDY";
+            const string dir = "Assets/Resources/AIDY", modules = "Modules";
             if (!Directory.Exists(dir)) return;
-            var models = new System.Collections.Generic.List<string>(Directory.GetFiles(dir, "*.stl"));
-            models.AddRange(Directory.GetFiles(dir, "*.3mf"));
+            var models = new System.Collections.Generic.List<string>();
+            foreach (string src in new[] { modules, dir })
+            {
+                if (!Directory.Exists(src)) continue;
+                models.AddRange(Directory.GetFiles(src, "*.stl"));
+                models.AddRange(Directory.GetFiles(src, "*.3mf"));
+                if (src != modules) continue; // Resources/AIDY の .obj は本体モデル (Unity が取り込む)
+                foreach (string obj in Directory.GetFiles(src, "*.obj"))
+                {
+                    string stlName = Path.GetFileNameWithoutExtension(obj) + ".stl";
+                    if (!File.Exists(Path.Combine(modules, stlName)) && !File.Exists(Path.Combine(dir, stlName))) models.Add(obj);
+                }
+            }
             foreach (string stl in models)
             {
                 string dst = Path.Combine(dir, Path.GetFileNameWithoutExtension(stl) + "_" + Path.GetExtension(stl).TrimStart('.').ToLowerInvariant() + ".bytes");
@@ -161,8 +174,10 @@ namespace Aidy.EditorTools
             PlayerSettings.Android.bundleVersionCode = 1;
             PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.Android, false);
             PlayerSettings.SetGraphicsAPIs(BuildTarget.Android, new[] { GraphicsDeviceType.OpenGLES3 });
-            PlayerSettings.Android.startInFullscreen = false; // ステータスバーは端末のものを表示
-            PlayerSettings.Android.renderOutsideSafeArea = false;
+            // iOS と同じく画面いっぱいに描き、ホームバー・切り欠きは Screen.safeArea で避ける。
+            // 全画面にしないと、ジェスチャーナビの端末で描画サイズとナビバーの分がずれて画面下が見切れる
+            PlayerSettings.Android.startInFullscreen = true;
+            PlayerSettings.Android.renderOutsideSafeArea = true;
             // Aidy 本体 (ローカル Wi-Fi 上の http://aidy.local) から会話ログを取得するため平文 HTTP を許可
             PlayerSettings.Android.forceInternetPermission = true;
             PlayerSettings.insecureHttpOption = InsecureHttpOption.AlwaysAllowed;
@@ -218,6 +233,7 @@ namespace Aidy.EditorTools
             layers.GetArrayElementAtIndex(Aidy.AidyHomeRoom.Layer).stringValue = "AidyHome3D";
             layers.GetArrayElementAtIndex(Aidy.AidyARView.FallbackLayer).stringValue = "AidyARPreview";
             layers.GetArrayElementAtIndex(Aidy.AidyHomeRoom.EditLayer).stringValue = "AidyModuleEdit";
+            layers.GetArrayElementAtIndex(Aidy.AidyModulePreview.Layer).stringValue = "AidyModulePreview";
             tagManager.ApplyModifiedProperties();
         }
 

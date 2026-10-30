@@ -10,17 +10,13 @@ namespace Aidy
     /// </summary>
     public class AidyModuleRig
     {
-        const string EarModel = "AIDY/耳_stl";
-        const string HandModel = "AIDY/手_短い_3mf";
-        const string HandLightModel = "AIDY/手_短い_懐中電灯_3mf";
-        const string TailModel = "AIDY/tail_stl";
-
         public readonly Transform Body;
         public readonly AidyModel.Variants Bodies;
-        readonly float size, mm, k;
+        readonly float size, k;
         readonly int layer;
         readonly bool editable;
         readonly Material satin;
+        readonly IReadOnlyDictionary<string, ModuleKind> fixedSlots;
 
         class Mount
         {
@@ -44,15 +40,16 @@ namespace Aidy
         ModuleKind? dropKind;
         string dropHover;
 
-        public AidyModuleRig(Transform body, float size, int layer, bool editable)
+        /// <summary>fixedSlots: 決まった構成で組む (名刺マーカーの標準 Aidy)。null なら ModuleConfig (いまの着せ替え) に従う。</summary>
+        public AidyModuleRig(Transform body, float size, int layer, bool editable, IReadOnlyDictionary<string, ModuleKind> fixedSlots = null)
         {
             Body = body;
             this.size = size;
             this.layer = layer;
             this.editable = editable;
-            mm = size / 150f;
+            this.fixedSlots = fixedSlots;
             k = size / 1.1f; // 足・尻尾はホームの本体 (1.1) を基準にした寸法
-            satin = AidyMaterials.Standard(new Color(0.627451f, 0.627451f, 0.627451f), 0.55f, 0.35f);
+            satin = Satin();
             Bodies = new AidyModel.Variants(body, size, layer);
             BuildFrames();
             Sync();
@@ -63,7 +60,15 @@ namespace Aidy
         public IEnumerable<SlotFrame> Frames => frames.Values;
 
         /// <summary>足の先が本体の底面からどれだけ下に出ているか。</summary>
-        public float LegReach => HasLegs ? 0.24f * k : 0f;
+        public float LegReach
+        {
+            get
+            {
+                if (!HasLegs) return 0f;
+                Mesh leg = AidyModelLoader.Load(ModuleKind.Legs);
+                return leg != null ? leg.bounds.max.y * size / 150f : 0.24f * k;
+            }
+        }
 
         public bool HasLegs
         {
@@ -77,7 +82,7 @@ namespace Aidy
         /// <summary>ModuleConfig に合わせてモジュールを作り直す。</summary>
         public void Sync()
         {
-            IReadOnlyDictionary<string, ModuleKind> want = ModuleConfig.Slots;
+            IReadOnlyDictionary<string, ModuleKind> want = fixedSlots ?? ModuleConfig.Slots;
             foreach (string id in new List<string>(mounts.Keys))
             {
                 if (want.TryGetValue(id, out ModuleKind kind) && kind == mounts[id].Kind) continue;
@@ -90,21 +95,28 @@ namespace Aidy
                 var root = new GameObject(kv.Value.ToString());
                 root.transform.SetParent(f.T, false);
                 var m = new Mount { Kind = kv.Value, Root = root };
-                BuildModule(m, f.Slot);
+                BuildModule(m.Kind, root.transform, f.Slot, size, satin, m.Swing);
                 Three.SetLayer(root, layer);
                 mounts[kv.Key] = m;
             }
-            FaceOn = ModuleConfig.FaceOn;
+            FaceOn = false;
+            foreach (ModuleKind k in want.Values) FaceOn |= k == ModuleKind.Face;
             Bodies.SetFace(FaceOn);
             UpdateMarkers();
         }
 
         // ------------------------------------------------------------ モジュールの形 (取り付け面ローカル: +Y=外向き, +Z=正面 or 上)
 
-        void BuildModule(Mount m, BodySlot slot)
+        public static Material Satin() => AidyMaterials.Standard(new Color(0.627451f, 0.627451f, 0.627451f), 0.55f, 0.35f);
+
+        /// <summary>
+        /// モジュールの形を f (取り付け面の座標系) の下に作る。size = 本体の一辺 (シーン単位)。
+        /// slot は向きの調整に使う (null なら背面スロット向き)。振る部分は swing に入る。モジュール一覧のプレビューでも使う。
+        /// </summary>
+        public static void BuildModule(ModuleKind kind, Transform f, BodySlot slot, float size, Material satin, List<Transform> swing)
         {
-            Transform f = m.Root.transform;
-            switch (m.Kind)
+            float mm = size / 150f, k = size / 1.1f;
+            switch (kind)
             {
                 case ModuleKind.Hand:
                 case ModuleKind.HandLight:
@@ -112,12 +124,12 @@ namespace Aidy
                     // 手: マグネットのくぼみを本体に当て、本体の側面に沿って正面へ伸びる。くぼみを軸に上下に振る
                     var pivot = new GameObject("HandPivot").transform;
                     pivot.SetParent(f, false);
-                    Mesh hand = AidyModelLoader.Load(m.Kind == ModuleKind.Hand ? HandModel : HandLightModel, MountAxis.MagnetPlusX);
+                    Mesh hand = AidyModelLoader.Load(kind);
                     if (hand != null)
                     {
                         var go = AidyMeshes.Create("Hand", pivot, hand, satin, true, true);
                         go.transform.localScale = Vector3.one * mm;
-                        if (m.Kind == ModuleKind.HandLight)
+                        if (kind == ModuleKind.HandLight)
                         {
                             // 懐中電灯のレンズ (長手方向の後ろ端) を光らせる
                             Bounds b = hand.bounds;
@@ -132,12 +144,12 @@ namespace Aidy
                         go.transform.localPosition = new Vector3(0, 15f * mm, 25f * mm);
                         go.transform.localRotation = Quaternion.AngleAxis(90f, Vector3.right);
                     }
-                    m.Swing.Add(pivot);
+                    swing.Add(pivot);
                     break;
                 }
                 case ModuleKind.Ear:
                 {
-                    Mesh ear = AidyModelLoader.Load(EarModel, MountAxis.ZUpFrontMinusY);
+                    Mesh ear = AidyModelLoader.Load(kind);
                     if (ear != null)
                     {
                         var go = AidyMeshes.Create("Ear", f, ear, satin, true, true);
@@ -151,18 +163,19 @@ namespace Aidy
                     break;
                 }
                 case ModuleKind.Tail:
+                case ModuleKind.Tail2:
                 {
-                    // 根元で左右に振る (wag)。tail.stl は差し込み部をスロットに入れ、+Z (背面なら上) へ反る
+                    // 根元で左右に振る (wag)。tail.stl / tail2.stl は差し込み部をスロットに入れ、+Z (背面なら上) へ反る
                     var wag = new GameObject("TailWag").transform;
                     wag.SetParent(f, false);
-                    m.Swing.Add(wag);
-                    Mesh tail = AidyModelLoader.Load(TailModel, MountAxis.SlotTabPlusY);
+                    swing.Add(wag);
+                    Mesh tail = AidyModelLoader.Load(kind);
                     if (tail != null)
                     {
                         var go = AidyMeshes.Create("Tail", wag, tail, satin, true, true);
                         go.transform.localScale = Vector3.one * mm;
                         // 差し込み部の長手 (モデルの X) をスロットの長手に合わせる。上面のスロットは前後向きなので横へ反る
-                        Vector3 longLocal = Quaternion.Inverse(slot.MountRotation) * slot.LongAxis;
+                        Vector3 longLocal = slot != null ? Quaternion.Inverse(slot.MountRotation) * slot.LongAxis : Vector3.right;
                         if (Mathf.Abs(longLocal.z) > 0.5f) go.transform.localRotation = Quaternion.AngleAxis(90f, Vector3.up);
                     }
                     else
@@ -178,7 +191,18 @@ namespace Aidy
                 }
                 case ModuleKind.Legs:
                 {
-                    // 1 スロットに前後 2 本。根元を pivot にして前後に振る
+                    // 足v1.3mf: 1 スロットに 1 つ。上面 (本体に当たる面) を pivot にして前後に振る
+                    Mesh foot = AidyModelLoader.Load(kind);
+                    if (foot != null)
+                    {
+                        var pivot = new GameObject("LegPivot").transform;
+                        pivot.SetParent(f, false);
+                        var go = AidyMeshes.Create("Leg", pivot, foot, satin, true, true);
+                        go.transform.localScale = Vector3.one * mm;
+                        swing.Add(pivot);
+                        break;
+                    }
+                    // モデルがなければ前後 2 本の円柱
                     var mesh = AidyMeshes.Cylinder(0.08f * k, 0.1f * k, 0.28f * k, 16);
                     foreach (float z in new[] { 0.35f, -0.35f })
                     {
@@ -187,7 +211,7 @@ namespace Aidy
                         pivot.localPosition = new Vector3(0, 0, z * k);
                         var go = AidyMeshes.Create("Leg", pivot, mesh, satin, true, true);
                         go.transform.localPosition = new Vector3(0, 0.1f * k, 0);
-                        m.Swing.Add(pivot);
+                        swing.Add(pivot);
                     }
                     break;
                 }
@@ -198,17 +222,17 @@ namespace Aidy
 
         public void SwingLegs(float amount, float phase)
         {
-            int i = 0;
+            int slot = 0;
             foreach (Mount m in mounts.Values)
             {
                 if (m.Kind != ModuleKind.Legs) continue;
-                foreach (Transform leg in m.Swing)
+                for (int j = 0; j < m.Swing.Count; j++)
                 {
-                    float a = Mathf.Sin(phase + (i % 2 == 0 ? 0 : Mathf.PI)) * amount;
-                    leg.localRotation = Quaternion.AngleAxis(a * Mathf.Rad2Deg, Vector3.right);
-                    i++;
+                    // 同じスロットの前後、隣のスロットどうしは逆位相
+                    float a = Mathf.Sin(phase + ((j + slot) % 2 == 0 ? 0 : Mathf.PI)) * amount;
+                    m.Swing[j].localRotation = Quaternion.AngleAxis(a * Mathf.Rad2Deg, Vector3.right);
                 }
-                i++; // 隣のスロットとは逆位相
+                slot++;
             }
         }
 
@@ -223,7 +247,7 @@ namespace Aidy
         public void WagTails(float angle)
         {
             foreach (Mount m in mounts.Values)
-                if (m.Kind == ModuleKind.Tail)
+                if (ModuleCatalog.IsTail(m.Kind))
                     foreach (Transform w in m.Swing) w.localRotation = Quaternion.AngleAxis(angle * Mathf.Rad2Deg, Vector3.forward);
         }
 
