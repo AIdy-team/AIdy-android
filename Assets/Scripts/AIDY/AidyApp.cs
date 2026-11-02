@@ -45,6 +45,7 @@ namespace Aidy
         AidyMascot statusMascot, editMascot;
         AidyToast homeToast, arToast;
         AidyModuleTray moduleTray;
+        AidyMarkerSheet markerSheet;
         Badge arStatus;
 
         // AR タブ: 「画面上」(付け替えプレビュー) と「AR」(カメラ) の切り替え
@@ -89,6 +90,7 @@ namespace Aidy
             editRoom = AidyHomeRoom.Create(transform, new Vector3(3000, 0, 0), true);
 
             BuildUI();
+            markerSheet = AidyMarkerSheet.Build(safeRoot);
         }
 
         void Start()
@@ -104,6 +106,7 @@ namespace Aidy
 
             ar.SetStatus = (icon, color, size, text) => arStatus.Set(icon, color, size, text);
             ar.SetPosition = OnARPlaced;
+            ar.Hint = text => arToast.Show(AidyFace.Normal, text, 2.8f);
             SetARMode(false);
 
             pager.PageChanged += OnPageChanged;
@@ -112,7 +115,13 @@ namespace Aidy
 
             string[] args = Environment.GetCommandLineArgs();
             for (int i = 0; i < args.Length - 1; i++)
+            {
                 if (args[i] == "-aidyShots") StartCoroutine(CaptureRoutine(args[i + 1]));
+                if (args[i] == "-aidyMarkerTest" && i + 2 < args.Length) StartCoroutine(MarkerTestRoutine(args[i + 1], args[i + 2]));
+                if (args[i] == "-aidyMarkerSheet") StartCoroutine(MarkerSheetRoutine(args[i + 1]));
+                if (args[i] == "-aidyARPlacement") StartCoroutine(ARPlacementRoutine(args[i + 1]));
+                if (args[i] == "-aidyFaces") StartCoroutine(FacesRoutine(args[i + 1]));
+            }
         }
 
         // フォントアトラスの更新後に全テキストのメッシュを作り直す
@@ -223,19 +232,31 @@ namespace Aidy
             brand.Pin(new Vector2(0, 0.5f), new Vector2(16, 0), Vector2.zero);
             brand.HLayout(0, 0, 0, 0, 8);
             brand.FitContent();
-            AidyMascot.Create(brand, 30, AidyFace.Normal, true, true);
-            UI.Label(brand, "AIDY", 20, Theme.TextMain, true);
+            // ロゴ画像 (Resources/AIDY/aidy_logo_dark = 黒文字・明るい背景用)。無ければ従来のマスコット + 文字
+            var logo = Resources.Load<Texture2D>("AIDY/aidy_logo_dark");
+            if (logo != null)
+            {
+                var img = UI.Rect("Logo", brand).gameObject.AddComponent<RawImage>();
+                img.texture = logo;
+                img.raycastTarget = false;
+                const float LogoHeight = 26f;
+                img.Layout(LogoHeight * logo.width / logo.height, LogoHeight);
+            }
+            else
+            {
+                AidyMascot.Create(brand, 30, AidyFace.Normal, true, true);
+                UI.Label(brand, "AIDY", 20, Theme.TextMain, true);
+            }
 
             var right = UI.Rect("Right", header);
             right.Pin(new Vector2(1, 0.5f), new Vector2(-10, 0), Vector2.zero);
             right.HLayout(0, 0, 0, 0, 6, TextAnchor.MiddleRight);
             right.FitContent();
-            BuildBattery(right, BatteryLevel);
 
             var gear = UI.Rect("SettingsButton", right);
-            gear.Layout(36, 36);
-            UI.Image(gear, "Hit", new Color(0, 0, 0, 0), 18, true).rectTransform.Stretch();
-            UI.Icon(gear, IconId.Gear, 16, Theme.TextSub).rectTransform.Pin(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(16, 16));
+            gear.Layout(44, 44);
+            UI.Image(gear, "Hit", new Color(0, 0, 0, 0), 22, true).rectTransform.Stretch();
+            UI.Icon(gear, IconId.Gear, 24, Theme.TextSub).rectTransform.Pin(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(24, 24));
             gear.gameObject.AddComponent<Clickable>().OnClick = () => pager.GoTo(PageSettings);
         }
 
@@ -315,7 +336,9 @@ namespace Aidy
             bar.pivot = new Vector2(0.5f, 0);
             bar.sizeDelta = new Vector2(0, TabBarHeight);
             bar.anchoredPosition = Vector2.zero;
-            UI.Image(bar, "Bg", Color.white, 0, true).rectTransform.Stretch();
+            // 背景はセーフエリアの下 (ホームバーの裏) まで伸ばす
+            RectTransform barBg = UI.Image(bar, "Bg", Color.white, 0, true).rectTransform.Stretch();
+            barBg.offsetMin = new Vector2(0, -200);
             var line = UI.Image(bar, "BorderTop", Theme.Border);
             line.rectTransform.anchorMin = new Vector2(0, 1);
             line.rectTransform.anchorMax = new Vector2(1, 1);
@@ -399,18 +422,23 @@ namespace Aidy
 
         void BuildHomePage(RectTransform page)
         {
-            // 1 画面で完結 (スクロールなし): 本体の今のモジュール構成を 3D で表示 + 下に構成のまとめ
+            // 1 画面で完結 (スクロールなし): 3D はページいっぱい (余白・角丸なし)、構成のまとめはその上に浮かべる
             UI.Image(page, "Bg", Theme.Device, 0, true).rectTransform.Stretch();
-            var c = UI.Rect("Content", page).Stretch();
-            c.VLayout(16, 16, 6, 10, 10).childForceExpandWidth = true;
-
-            canvasContainer = View3D(c, home, out aiStateText, out statusMascot, "タップでなでなで ・ ドラッグで回転 ・ ピンチでズーム", out _);
+            const float SummaryHeight = 58f, SummaryMargin = 12f;
+            canvasContainer = View3D(page, home, out aiStateText, out statusMascot, "タップでなでなで ・ ドラッグで回転 ・ ピンチでズーム", out _,
+                                     0f, SummaryHeight + SummaryMargin * 2f, 0f, true);
+            canvasContainer.Stretch();
+            home.ViewInsetBottom = SummaryHeight + SummaryMargin * 2f;
             homeToast = AidyToast.Create(canvasContainer, 52);
 
             // いまのモジュール + お散歩 + 付け替えへ
-            var row = UI.Rect("ModuleSummary", c);
-            row.Layout(-1, 58);
-            UI.Box(row, Color.white, 18, new BoxShadow(0, 4, 16, new Color(0, 0, 0, 0.04f)), Theme.Border);
+            var row = UI.Rect("ModuleSummary", page);
+            row.anchorMin = new Vector2(0, 0);
+            row.anchorMax = new Vector2(1, 0);
+            row.pivot = new Vector2(0.5f, 0);
+            row.offsetMin = new Vector2(16, SummaryMargin);
+            row.offsetMax = new Vector2(-16, SummaryMargin + SummaryHeight);
+            UI.Box(row, new Color(1, 1, 1, 0.94f), 18, new BoxShadow(0, 4, 16, new Color(0, 0, 0, 0.08f)), Theme.Border).raycastTarget = true;
             row.HLayout(14, 10, 8, 8, 8);
             UI.Icon(row, IconId.Cubes, 14, Theme.Primary);
             var info = UI.Rect("Info", row);
@@ -437,13 +465,16 @@ namespace Aidy
 
         /// <summary>
         /// 3D ビュー (角丸マスク + RawImage + 操作 + 状態の吹き出し + 操作ヒント + ズームボタン)。
-        /// 状態の吹き出しの文字とデフォルメ Aidy を返す。
+        /// 状態の吹き出しの文字とデフォルメ Aidy を返す。radius 0 で角丸なし (全画面)、
+        /// bottomInset / topInset は上下に重ねる UI の分だけヒント・ズームボタン / 吹き出しをずらす。
+        /// battery なら吹き出しの横に本体の充電残量を出す (ホーム)。
         /// </summary>
-        RectTransform View3D(RectTransform parent, AidyHomeRoom room, out TMP_Text stateText, out AidyMascot mascot, string hintText, out AidyHomeTouch touch)
+        RectTransform View3D(RectTransform parent, AidyHomeRoom room, out TMP_Text stateText, out AidyMascot mascot, string hintText, out AidyHomeTouch touch,
+                             float radius = 24f, float bottomInset = 0f, float topInset = 0f, bool battery = false)
         {
             var box = UI.Rect("CanvasContainer", parent);
             box.Layout(-1, -1, -1, 1).minHeight = 220;
-            var mask = UI.Image(box, "Mask", Theme.Hex(0xf1f5f9), 24, true);
+            var mask = UI.Image(box, "Mask", Theme.Hex(0xf1f5f9), radius, true);
             mask.rectTransform.Stretch();
             mask.gameObject.AddComponent<Mask>().showMaskGraphic = true;
             var raw = UI.Rect("ThreeCanvas", mask.transform).Stretch().gameObject.AddComponent<RawImage>();
@@ -452,17 +483,28 @@ namespace Aidy
             touch.Room = room;
 
             // ai-status-bubble
-            var bub = UI.Rect("AIStatus", box);
-            bub.Pin(new Vector2(0, 1), new Vector2(12, -12), Vector2.zero);
+            // 左上: いまの状態の吹き出し (+ 充電残量)
+            var top = UI.Rect("TopRow", box);
+            top.Pin(new Vector2(0, 1), new Vector2(12, -12 - topInset), Vector2.zero);
+            top.HLayout(0, 0, 0, 0, 8);
+            top.FitContent();
+            var bub = UI.Rect("AIStatus", top);
             UI.Box(bub, new Color(1, 1, 1, 0.88f), 16, new BoxShadow(0, 4, 12, new Color(0, 0, 0, 0.05f)));
             bub.HLayout(12, 12, 6, 6, 6);
-            bub.FitContent();
             mascot = AidyMascot.Create(bub, 16, AidyFace.Normal);
             stateText = UI.Label(bub, "こんにちは！", 11, Theme.Primary, true);
+            if (battery)
+            {
+                var pill = UI.Rect("BatteryPill", top);
+                UI.Box(pill, new Color(1, 1, 1, 0.88f), 16, new BoxShadow(0, 4, 12, new Color(0, 0, 0, 0.05f)));
+                pill.HLayout(10, 8, 0, 0, 0, TextAnchor.MiddleCenter);
+                pill.Layout(-1, 30);
+                BuildBattery(pill, BatteryLevel);
+            }
 
             // 操作ヒント
             var hint = UI.Rect("RotateHint", box);
-            hint.Pin(new Vector2(0.5f, 0), new Vector2(0, 10), Vector2.zero);
+            hint.Pin(new Vector2(0.5f, 0), new Vector2(0, bottomInset + 10), Vector2.zero);
             UI.Box(hint, new Color(1, 1, 1, 0.8f), 12);
             hint.HLayout(12, 12, 4, 4, 8);
             hint.FitContent();
@@ -471,7 +513,7 @@ namespace Aidy
 
             // ズームボタン (+ / −)
             var zoom = UI.Rect("Zoom", box);
-            zoom.Pin(new Vector2(1, 0), new Vector2(-10, 44), Vector2.zero);
+            zoom.Pin(new Vector2(1, 0), new Vector2(-10, bottomInset + 44), Vector2.zero);
             zoom.pivot = new Vector2(1, 0);
             zoom.VLayout(0, 0, 0, 0, 6);
             zoom.FitContent();
@@ -573,8 +615,20 @@ namespace Aidy
             bottom.offsetMin = new Vector2(20, 20);
             bottom.offsetMax = new Vector2(-20, 68);
             bottom.HLayout(0, 0, 0, 0, 12, TextAnchor.MiddleCenter);
-            ARButton(bottom, IconId.Video, "カメラ起動", true).OnClick = () => ar.StartCamera();
+            ARButton(bottom, IconId.Sliders, "表示方法", true).OnClick = () => ar.SetPlacement(AidyARView.Placement.Choose);
             ARButton(bottom, IconId.Crosshairs, "中央に再配置", false).OnClick = () => ar.ResetPosition();
+            ARButton(bottom, IconId.Camera, "カメラ切替", false).OnClick = () =>
+            {
+                string cam = ar.SwitchCamera();
+                if (cam == null) arToast.Show(AidyFace.Sleepy, "切り替えられるカメラがないよ", 2.2f);
+                else
+                {
+                    UI.EnsureChars(cam);
+                    arToast.Show(AidyFace.Happy, "カメラ: " + cam, 2.2f);
+                }
+            };
+
+            BuildPlacementChooser(camUI);
 
             ar.Page = page;
             ar.Black = black;
@@ -585,15 +639,23 @@ namespace Aidy
             // ---- 画面上: 3D プレビューで面をタップ → モジュールをドラッグ&ドロップで付け替え
             var onScreen = UI.Rect("OnScreenMode", page).Stretch();
             arOnScreenUI = onScreen.gameObject;
+            // ホームと同じく 3D はページいっぱい。上の切り替えと下のモジュール欄はその上に浮かべる
             UI.Image(onScreen, "Bg", Theme.Device, 0, true).rectTransform.Stretch();
-            var c = UI.Rect("Content", onScreen).Stretch();
-            c.VLayout(16, 16, 56, 10, 10).childForceExpandWidth = true;
-            View3D(c, editRoom, out editStateText, out editMascot, "面をタップで選択 ・ ドラッグで回転 ・ ピンチでズーム", out AidyHomeTouch editTouch);
+            const float TrayHeight = 160f, TrayMargin = 12f, SwitchSpace = 56f;
+            View3D(onScreen, editRoom, out editStateText, out editMascot, "面をタップで選択 ・ ドラッグで回転 ・ ピンチでズーム", out AidyHomeTouch editTouch,
+                   0f, TrayHeight + TrayMargin * 2f, SwitchSpace).Stretch();
             editStateText.text = "面をタップして付け替えよう";
-            var tray = UI.Rect("ModuleTray", c);
-            tray.Layout(-1, 140);
+            editRoom.ViewInsetTop = SwitchSpace;
+            editRoom.ViewInsetBottom = TrayHeight + TrayMargin * 2f;
+            var tray = UI.Rect("ModuleTray", onScreen);
+            tray.anchorMin = new Vector2(0, 0);
+            tray.anchorMax = new Vector2(1, 0);
+            tray.pivot = new Vector2(0.5f, 0);
+            tray.offsetMin = new Vector2(16, TrayMargin);
+            tray.offsetMax = new Vector2(-16, TrayMargin + TrayHeight);
             moduleTray = AidyModuleTray.Build(tray, editRoom, safeRoot);
             editTouch.Tray = moduleTray;
+            moduleTray.OnMarkerButton = () => markerSheet.Open();
 
             // ---- 切り替え [画面上 | AR]
             var seg = UI.Rect("ModeSwitch", page);
@@ -619,9 +681,63 @@ namespace Aidy
             return c;
         }
 
+        /// <summary>AR を始めたとき: マーカーで出すか、マーカーなしで机や床に置くかを選ぶカード。</summary>
+        void BuildPlacementChooser(RectTransform camUI)
+        {
+            var root = UI.Rect("PlacementChooser", camUI).Stretch();
+            UI.Image(root, "Dim", new Color(0, 0, 0, 0.35f), 0, true).rectTransform.Stretch();
+            var card = UI.Rect("Card", root);
+            card.anchorMin = new Vector2(0, 0.5f);
+            card.anchorMax = new Vector2(1, 0.5f);
+            card.pivot = new Vector2(0.5f, 0.5f);
+            card.offsetMin = new Vector2(24, 0);
+            card.offsetMax = new Vector2(-24, 0);
+            UI.Box(card, Color.white, 22, new BoxShadow(0, 8, 24, new Color(0, 0, 0, 0.25f))).raycastTarget = true;
+            card.VLayout(18, 18, 18, 18, 10).childForceExpandWidth = true;
+            card.FitContent(false, true);
+
+            UI.Label(card, "Aidyをどうやって表示する？", 15, Theme.TextMain, true, TextAnchor.MiddleCenter).Layout(-1, 24);
+            PlacementOption(card, IconId.Crosshairs, "マーカーで表示", "マーカーを写すと、その上にAidyが出てくるよ")
+                .OnClick = () => ChoosePlacement(AidyARView.Placement.Marker);
+            PlacementOption(card, IconId.HandPointer, "マーカーなしで置く", "机や床をタップすると、そこにAidyを置くよ")
+                .OnClick = () => ChoosePlacement(AidyARView.Placement.Free);
+
+            ar.PlacementChanged += p => root.gameObject.SetActive(p == AidyARView.Placement.Choose);
+        }
+
+        static Clickable PlacementOption(RectTransform parent, IconId icon, string title, string sub)
+        {
+            var b = UI.Rect("Option", parent);
+            b.Layout(-1, 64);
+            var bg = UI.Image(b, "Bg", Theme.Slate100, 16, true);
+            bg.rectTransform.Stretch();
+            bg.IgnoreLayout();
+            b.HLayout(14, 14, 0, 0, 12);
+            var circle = UI.Rect("IconBg", b);
+            circle.Layout(40, 40);
+            UI.Image(circle, "Bg", Theme.PrimaryLight, 20).rectTransform.Stretch();
+            UI.Icon(circle, icon, 16, Theme.Primary).rectTransform.Pin(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(16, 16));
+            var text = UI.Rect("Text", b);
+            text.VLayout(0, 0, 0, 0, 2, TextAnchor.MiddleLeft);
+            text.Layout(-1, -1, 1);
+            UI.Label(text, title, 14, Theme.TextMain, true).Layout(-1, 20);
+            UI.Label(text, sub, 11, Theme.TextSub).Layout(-1, 16);
+            UI.Icon(b, IconId.ChevronRight, 12, Theme.Slate400);
+            var c = b.gameObject.AddComponent<Clickable>();
+            c.PressScale = 0.98f;
+            return c;
+        }
+
+        void ChoosePlacement(AidyARView.Placement p)
+        {
+            ar.StartCamera();
+            ar.SetPlacement(p);
+        }
+
         /// <summary>AR タブの表示切り替え。true: カメラで AR / false: 画面上の 3D で付け替えプレビュー。</summary>
         void SetARMode(bool on)
         {
+            if (on && !arMode) ar.SetPlacement(AidyARView.Placement.Choose); // AR を開くたびに表示方法を選び直す
             arMode = on;
             arCameraUI.SetActive(on);
             arOnScreenUI.SetActive(!on);
@@ -880,6 +996,14 @@ namespace Aidy
             pager.GoTo(PageAR);
             yield return new WaitForSeconds(1.2f);
             yield return Capture(dir, "page3_onscreen");
+            editRoom.SelectFace(null); // 面を選ぶ前 = 全モジュールのカルーセル
+            yield return new WaitForSeconds(0.5f);
+            yield return Capture(dir, "page3_tray_all");
+            moduleTray.ScrollBy(2);
+            yield return new WaitForSeconds(0.08f);
+            yield return Capture(dir, "page3_tray_swiping");
+            yield return new WaitForSeconds(1.2f);
+            yield return Capture(dir, "page3_tray_scrolled");
             editRoom.SelectFace("left");
             yield return new WaitForSeconds(1.2f);
             yield return Capture(dir, "page3_select_left");
@@ -919,6 +1043,133 @@ namespace Aidy
             yield return Capture(dir, "page1_diary_logs");
             pager.GoTo(PageHome);
             yield return new WaitForSeconds(1f);
+            Application.Quit();
+        }
+
+        /// <summary>検証用 (-aidyMarkerTest <画像> <出力先>): 静止画をカメラ映像として AR 画面に出し、マーカーの上のモデルを撮る。</summary>
+        IEnumerator MarkerTestRoutine(string image, string dir)
+        {
+            Directory.CreateDirectory(dir);
+            var tex = new Texture2D(2, 2);
+            tex.LoadImage(File.ReadAllBytes(image));
+            yield return new WaitForSeconds(1.5f);
+            pager.GoTo(PageAR);
+            ar.UseTestImage(tex);
+            SetARMode(true);
+            ar.SetPlacement(AidyARView.Placement.Marker);
+            yield return new WaitForSeconds(2f);
+            yield return Capture(dir, "marker_" + Path.GetFileNameWithoutExtension(image));
+            Application.Quit();
+        }
+
+        /// <summary>検証用 (-aidyMarkerSheet <出力先>): 着せ替えマーカーを作って保存し、その画像をカメラ映像にして写るモデルを撮る。</summary>
+        IEnumerator MarkerSheetRoutine(string dir)
+        {
+            Directory.CreateDirectory(dir);
+            yield return new WaitForSeconds(1.5f);
+            pager.GoTo(PageAR);
+            yield return new WaitForSeconds(1.2f);
+            editRoom.SelectFace("left");
+            editRoom.Replace(ModuleKind.Hand, "left_2");
+            editRoom.SelectFace(null);
+            yield return new WaitForSeconds(1f);
+            yield return Capture(dir, "sheet0_tray");
+            markerSheet.Open();
+            yield return new WaitForSeconds(0.4f);
+            yield return Capture(dir, "sheet1_open");
+            int? id = AidyMarkerStore.Find(ModuleConfig.Slots) ?? AidyMarkerStore.Create(ModuleConfig.Slots);
+            markerSheet.Open();
+            yield return new WaitForSeconds(0.4f);
+            yield return Capture(dir, "sheet2_created");
+            string png = AidyMarkerImage.SavePng(id.Value);
+            Debug.Log("[AIDY] marker saved: " + png);
+            markerSheet.Close();
+
+            // 保存した画像をカメラに写す → 作ったときの着せ替え (手付き)。いまの着せ替えを戻しても変わらない
+            ModuleConfig.ResetToDefault();
+            var src = new Texture2D(2, 2);
+            src.LoadImage(File.ReadAllBytes(png));
+            // 少し離れて撮った写真のように、白い 1280x960 の中央に 1/8 の大きさで置く
+            var tex = new Texture2D(1280, 960, TextureFormat.RGBA32, false);
+            var px = new Color32[1280 * 960];
+            for (int i = 0; i < px.Length; i++) px[i] = new Color32(235, 235, 230, 255);
+            int m = src.width / 8, ox = (1280 - m) / 2, oy = (960 - m) / 2;
+            for (int y = 0; y < m; y++)
+                for (int x = 0; x < m; x++)
+                    px[(oy + y) * 1280 + ox + x] = src.GetPixel(x * 8, y * 8);
+            tex.SetPixels32(px);
+            tex.Apply();
+            ar.UseTestImage(tex);
+            SetARMode(true);
+            ar.SetPlacement(AidyARView.Placement.Marker);
+            yield return new WaitForSeconds(2f);
+            yield return Capture(dir, "sheet3_scan_saved");
+            AidyMarkerStore.Delete(id.Value);
+            yield return new WaitForSeconds(1f);
+            yield return Capture(dir, "sheet4_deleted");
+            Application.Quit();
+        }
+
+        /// <summary>検証用 (-aidyFaces <出力先>): 顔モニターの全表情を、画面の絵 (face_*.png) とホームの 3D (home_*.png) で撮る。</summary>
+        IEnumerator FacesRoutine(string dir)
+        {
+            Directory.CreateDirectory(dir);
+            yield return new WaitForSeconds(1.5f);
+            pager.GoTo(PageHome);
+            home.ToggleAIWalk(false); // 自分で表情を変えないように
+            yield return new WaitForSeconds(1.5f);
+            foreach (string name in AidyFaceScreen.Names)
+            {
+                foreach (AidyFaceScreen s in FindObjectsOfType<AidyFaceScreen>()) s.SetFace(name);
+                yield return new WaitForSeconds(1.2f);
+                foreach (AidyFaceScreen s in FindObjectsOfType<AidyFaceScreen>())
+                {
+                    if (!s.GetComponent<Renderer>().isVisible) continue;
+                    File.WriteAllBytes(Path.Combine(dir, "face_" + name + ".png"), s.Texture.EncodeToPNG());
+                    break;
+                }
+                yield return Capture(dir, "home_" + name);
+            }
+            Application.Quit();
+        }
+
+        /// <summary>検証用 (-aidyARPlacement <出力先>): 表示方法の選択 → マーカーなしで机の面に置く → マーカー待ち、を撮る。</summary>
+        IEnumerator ARPlacementRoutine(string dir)
+        {
+            Directory.CreateDirectory(dir);
+            yield return new WaitForSeconds(1.5f);
+            pager.GoTo(PageAR);
+            yield return new WaitForSeconds(1.2f);
+            // 机を斜め上から撮ったような映像の代わり: 上が壁、下が木の天板
+            var tex = new Texture2D(1280, 960, TextureFormat.RGBA32, false);
+            var px = new Color32[1280 * 960];
+            for (int y = 0; y < 960; y++)
+                for (int x = 0; x < 1280; x++)
+                {
+                    float grain = Mathf.PerlinNoise(x * 0.004f, y * 0.06f) * 30f;
+                    px[y * 1280 + x] = y > 640
+                        ? new Color32(226, 228, 232, 255)
+                        : new Color32((byte)(150 + grain), (byte)(105 + grain * 0.7f), (byte)(70 + grain * 0.4f), 255);
+                }
+            tex.SetPixels32(px);
+            tex.Apply();
+            ar.UseTestImage(tex);
+            SetARMode(true);
+            yield return new WaitForSeconds(1f);
+            yield return Capture(dir, "place0_choose");
+            ChoosePlacement(AidyARView.Placement.Free);
+            yield return new WaitForSeconds(0.8f);
+            yield return Capture(dir, "place1_free_reticle");
+            ar.ResetPosition();
+            yield return new WaitForSeconds(1.5f);
+            yield return Capture(dir, "place2_center");
+            ar.PointerDown();
+            ar.PointerUp(new Vector2(Screen.width * 0.3f, Screen.height * 0.3f));
+            yield return new WaitForSeconds(1.5f);
+            yield return Capture(dir, "place3_tap_near");
+            ChoosePlacement(AidyARView.Placement.Marker);
+            yield return new WaitForSeconds(1f);
+            yield return Capture(dir, "place4_marker_wait");
             Application.Quit();
         }
 

@@ -80,3 +80,7 @@ google-services.json
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# エディタで保存したマーカー画像・Python のキャッシュ
+/Markers/
+__pycache__/

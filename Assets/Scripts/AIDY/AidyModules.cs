@@ -5,12 +5,12 @@ using UnityEngine;
 namespace Aidy
 {
     /// <summary>本体に取り付けるモジュールの種類。</summary>
-    public enum ModuleKind { Ear, Tail, Legs, Face, Hand, HandLight }
+    public enum ModuleKind { Ear, Tail, Tail2, Legs, Face, Hand, HandLight }
 
-    /// <summary>モジュールの名前・アイコン・色・取り付けられる面。</summary>
+    /// <summary>モジュールの名前・アイコン・色・モデルファイル・取り付けられる面。</summary>
     public static class ModuleCatalog
     {
-        public static readonly ModuleKind[] All = { ModuleKind.Ear, ModuleKind.Tail, ModuleKind.Legs, ModuleKind.Face, ModuleKind.Hand, ModuleKind.HandLight };
+        public static readonly ModuleKind[] All = { ModuleKind.Ear, ModuleKind.Tail, ModuleKind.Tail2, ModuleKind.Legs, ModuleKind.Face, ModuleKind.Hand, ModuleKind.HandLight };
 
         public static string Name(ModuleKind k)
         {
@@ -18,6 +18,7 @@ namespace Aidy
             {
                 case ModuleKind.Ear: return "耳";
                 case ModuleKind.Tail: return "尻尾";
+                case ModuleKind.Tail2: return "尻尾2";
                 case ModuleKind.Legs: return "足";
                 case ModuleKind.Hand: return "手";
                 case ModuleKind.HandLight: return "ライト手";
@@ -30,7 +31,8 @@ namespace Aidy
             switch (k)
             {
                 case ModuleKind.Ear: return IconId.Ear;
-                case ModuleKind.Tail: return IconId.Tail;
+                case ModuleKind.Tail:
+                case ModuleKind.Tail2: return IconId.Tail;
                 case ModuleKind.Legs: return IconId.Leg;
                 case ModuleKind.Hand: return IconId.Hand;
                 case ModuleKind.HandLight: return IconId.Flashlight;
@@ -44,6 +46,7 @@ namespace Aidy
             {
                 case ModuleKind.Ear: return Theme.Hex(0xf97316);
                 case ModuleKind.Tail: return Theme.Hex(0x8b5cf6);
+                case ModuleKind.Tail2: return Theme.Hex(0x6366f1);
                 case ModuleKind.Legs: return Theme.Hex(0x10b981);
                 case ModuleKind.Hand: return Theme.Hex(0xec4899);
                 case ModuleKind.HandLight: return Theme.Hex(0xeab308);
@@ -58,12 +61,45 @@ namespace Aidy
             {
                 case ModuleKind.Face: return s.IsMonitor;
                 case ModuleKind.Ear: return !s.IsMonitor && (s.Face == "top" || s.Face == "left" || s.Face == "right");
-                case ModuleKind.Tail: return !s.IsMonitor && (s.Face == "back" || s.Face == "top");
+                case ModuleKind.Tail:
+                case ModuleKind.Tail2: return !s.IsMonitor && (s.Face == "back" || s.Face == "top");
                 case ModuleKind.Legs: return !s.IsMonitor && s.Face == "bottom";
                 case ModuleKind.Hand:
                 case ModuleKind.HandLight: return !s.IsMonitor && (s.Face == "left" || s.Face == "right");
             }
             return false;
+        }
+
+        public static bool IsTail(ModuleKind k) => k == ModuleKind.Tail || k == ModuleKind.Tail2;
+
+        /// <summary>
+        /// モデルファイル (Resources/AIDY/ 以下、拡張子なし)。AidyModelLoader が *_stl → *_obj → *_3mf の順に探す。
+        /// 顔はモデルファイルを持たない (本体v2_顔ありに切り替え)。
+        /// </summary>
+        public static string ModelPath(ModuleKind k)
+        {
+            switch (k)
+            {
+                case ModuleKind.Ear: return "AIDY/耳";
+                case ModuleKind.Tail: return "AIDY/tail";
+                case ModuleKind.Tail2: return "AIDY/tail2";
+                case ModuleKind.Hand: return "AIDY/手_短い";
+                case ModuleKind.HandLight: return "AIDY/手_短い_懐中電灯";
+                case ModuleKind.Legs: return "AIDY/足v1";
+                default: return null;
+            }
+        }
+
+        public static MountAxis Axis(ModuleKind k)
+        {
+            switch (k)
+            {
+                case ModuleKind.Ear: return MountAxis.ZUpFrontMinusY;
+                case ModuleKind.Tail:
+                case ModuleKind.Tail2: return MountAxis.SlotTabPlusY;
+                case ModuleKind.Legs: return MountAxis.TopPadZUp;
+                default: return MountAxis.MagnetPlusX;
+            }
         }
 
         /// <summary>その面に付けられるモジュール。</summary>
@@ -164,17 +200,22 @@ namespace Aidy
             return true;
         }
 
-        /// <summary>サンプルの初期構成: 上面に耳2つ・背面に尻尾・底面に足2組・正面に顔。</summary>
+        /// <summary>標準構成 (初期状態・名刺マーカーの Aidy): 上面に耳2つ・背面に尻尾・底面に足2組・正面に顔。</summary>
+        public static readonly IReadOnlyDictionary<string, ModuleKind> Default = new Dictionary<string, ModuleKind>
+        {
+            { "top_1", ModuleKind.Ear },
+            { "top_3", ModuleKind.Ear },
+            { "back_1", ModuleKind.Tail },
+            { "bottom_1", ModuleKind.Legs },
+            { "bottom_3", ModuleKind.Legs },
+            { "monitor", ModuleKind.Face }
+        };
+
         public static void ResetToDefault()
         {
             Load();
             foreach (string id in new List<string>(slots.Keys)) Detach(id);
-            Attach(ModuleKind.Ear, "top_1");
-            Attach(ModuleKind.Ear, "top_3");
-            Attach(ModuleKind.Tail, "back_1");
-            Attach(ModuleKind.Legs, "bottom_1");
-            Attach(ModuleKind.Legs, "bottom_3");
-            Attach(ModuleKind.Face, "monitor");
+            foreach (var kv in Default) Attach(kv.Value, kv.Key);
         }
 
         static void Load()
@@ -352,41 +393,62 @@ namespace Aidy
         MagnetPlusX,
         /// <summary>
         /// Z 上・+Y 外向き。-Y 側の台座の底面にスロットと同じ溝 (28.8x4mm、X が長手、中心が原点の XZ) があり、
-        /// その底面を取り付け面に置いて +Z 側へ反らせる (tail.stl)。
+        /// その底面を取り付け面に置いて +Z 側へ反らせる (tail.stl, tail2.stl)。
         /// </summary>
-        SlotTabPlusY
+        SlotTabPlusY,
+        /// <summary>
+        /// Z 上・-Y 正面。上面の平らな面 (Z 最大) を本体の底面に当て、その中心を取り付け位置にする。
+        /// 足v1.3mf は左右 2 つ入りなので、X が小さい方の 1 つだけ使う (1 スロットに 1 つ)。
+        /// </summary>
+        TopPadZUp
     }
 
     /// <summary>
-    /// STL (バイナリ/ASCII) と 3MF を読み込むランタイムローダー。Unity は .stl / .3mf を取り込めないため、
-    /// エディタのセットアップで Resources/AIDY/*.stl, *.3mf を *_stl.bytes, *_3mf.bytes にコピーしたものを TextAsset として読む。
+    /// モジュールのモデル (.stl / .obj、旧形式の .3mf) を読み込むランタイムローダー。Unity の取り込みを通さず生のファイルを読むため、
+    /// エディタのセットアップで Modules/ (と Resources/AIDY/) の *.stl, *.obj, *.3mf を Resources/AIDY/*_stl.bytes, *_obj.bytes, *_3mf.bytes
+    /// にコピーしたものを TextAsset として読む。座標系は STL (Z 上) が基準で、OBJ (Blender の既定の Y 上で書き出し) は Z 上へ戻す。
     /// 返すメッシュは取り付け面ローカル (単位 mm)。
     /// </summary>
     public static class AidyModelLoader
     {
         const float CreaseAngle = 40f;
+        static readonly string[] Formats = { "stl", "obj", "3mf" };
         static readonly Dictionary<string, Mesh> cache = new Dictionary<string, Mesh>();
 
-        public static Mesh Load(string resourcePath, MountAxis axis)
+        public static Mesh Load(ModuleKind kind)
         {
-            if (cache.TryGetValue(resourcePath, out Mesh m)) return m;
-            var asset = Resources.Load<TextAsset>(resourcePath);
-            if (asset == null) Debug.LogWarning("[AIDY] モデルが見つかりません: " + resourcePath);
+            string path = ModuleCatalog.ModelPath(kind);
+            return path != null ? Load(path, ModuleCatalog.Axis(kind)) : null;
+        }
+
+        /// <summary>basePath: 拡張子なしのパス ("AIDY/tail2")。*_stl → *_obj → *_3mf の順に探す。</summary>
+        public static Mesh Load(string basePath, MountAxis axis)
+        {
+            if (cache.TryGetValue(basePath, out Mesh m)) return m;
+            TextAsset asset = null;
+            string format = null;
+            foreach (string f in Formats)
+            {
+                asset = Resources.Load<TextAsset>(basePath + "_" + f);
+                if (asset == null) continue;
+                format = f;
+                break;
+            }
+            if (asset == null) Debug.LogWarning("[AIDY] モデルが見つかりません: " + basePath + " (.stl / .obj)");
             else
             {
                 try
                 {
                     byte[] b = asset.bytes;
-                    bool zip = b.Length > 4 && b[0] == 'P' && b[1] == 'K';
-                    List<Vector3> tris = zip ? Parse3mf(b) : ParseStl(b);
-                    m = Build(tris, axis, resourcePath);
+                    List<Vector3> tris = format == "obj" ? ParseObj(b) : format == "3mf" ? Parse3mf(b) : ParseStl(b);
+                    m = Build(tris, axis, basePath);
                 }
                 catch (Exception e)
                 {
-                    Debug.LogWarning($"[AIDY] モデルの読込に失敗 {resourcePath}: {e.Message}");
+                    Debug.LogWarning($"[AIDY] モデルの読込に失敗 {basePath}_{format}: {e.Message}");
                 }
             }
-            cache[resourcePath] = m;
+            cache[basePath] = m;
             return m;
         }
 
@@ -437,7 +499,96 @@ namespace Aidy
             return v;
         }
 
-        static readonly System.Text.RegularExpressions.Regex VertexRe = new System.Text.RegularExpressions.Regex(
+        /// <summary>
+        /// OBJ (v と f だけ使う)。Blender の既定の書き出し (Y 上・-Z 前) を STL と同じ Z 上 (x, -z, y) に戻す。
+        /// 多角形の面は耳切り法で三角形に分ける (凹んだ面もそのまま扱える)。
+        /// </summary>
+        static List<Vector3> ParseObj(byte[] b)
+        {
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            var verts = new List<Vector3>();
+            var tris = new List<Vector3>();
+            var poly = new List<Vector3>();
+            foreach (string raw in System.Text.Encoding.UTF8.GetString(b).Split('\n'))
+            {
+                string line = raw.Trim();
+                bool vertex = line.StartsWith("v "), face = line.StartsWith("f ");
+                if (!vertex && !face) continue;
+                string[] p = line.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+                if (vertex)
+                {
+                    if (p.Length >= 4) verts.Add(new Vector3(float.Parse(p[1], ci), -float.Parse(p[3], ci), float.Parse(p[2], ci)));
+                    continue;
+                }
+                poly.Clear();
+                for (int i = 1; i < p.Length; i++)
+                {
+                    int slash = p[i].IndexOf('/');
+                    int idx = int.Parse(slash >= 0 ? p[i].Substring(0, slash) : p[i], ci);
+                    poly.Add(verts[idx > 0 ? idx - 1 : verts.Count + idx]); // 負の番号は末尾からの相対
+                }
+                Triangulate(poly, tris);
+            }
+            return ToMm(tris);
+        }
+
+        /// <summary>平面の多角形を耳切り法で三角形に分けて output に足す (巻き順は元の多角形のまま)。</summary>
+        static void Triangulate(List<Vector3> poly, List<Vector3> output)
+        {
+            int n = poly.Count;
+            if (n < 3) return;
+            if (n == 3)
+            {
+                output.AddRange(poly);
+                return;
+            }
+            // Newell 法で面の法線を求め、その平面に投影した 2D で耳を探す
+            Vector3 normal = Vector3.zero;
+            for (int i = 0; i < n; i++)
+            {
+                Vector3 a = poly[i], c = poly[(i + 1) % n];
+                normal += new Vector3((a.y - c.y) * (a.z + c.z), (a.z - c.z) * (a.x + c.x), (a.x - c.x) * (a.y + c.y));
+            }
+            normal = normal.sqrMagnitude > 0f ? normal.normalized : Vector3.forward;
+            Vector3 u = Vector3.Cross(normal, Mathf.Abs(normal.x) < 0.9f ? Vector3.right : Vector3.up).normalized;
+            Vector3 w = Vector3.Cross(normal, u);
+            var p2 = new Vector2[n];
+            for (int i = 0; i < n; i++) p2[i] = new Vector2(Vector3.Dot(poly[i], u), Vector3.Dot(poly[i], w));
+
+            var rest = new List<int>(n);
+            for (int i = 0; i < n; i++) rest.Add(i);
+            while (rest.Count > 3)
+            {
+                bool clipped = false;
+                for (int i = 0; i < rest.Count && !clipped; i++)
+                {
+                    int ia = rest[(i + rest.Count - 1) % rest.Count], ib = rest[i], ic = rest[(i + 1) % rest.Count];
+                    if (Cross(p2[ia], p2[ib], p2[ic]) <= 0f) continue; // 凹んだ頂点は耳にならない
+                    bool inside = false;
+                    foreach (int j in rest)
+                        if (j != ia && j != ib && j != ic && InTriangle(p2[j], p2[ia], p2[ib], p2[ic])) { inside = true; break; }
+                    if (inside) continue;
+                    output.Add(poly[ia]);
+                    output.Add(poly[ib]);
+                    output.Add(poly[ic]);
+                    rest.RemoveAt(i);
+                    clipped = true;
+                }
+                if (!clipped) break; // 退化した面: 残りは扇形で埋める
+            }
+            for (int i = 1; i + 1 < rest.Count; i++)
+            {
+                output.Add(poly[rest[0]]);
+                output.Add(poly[rest[i]]);
+                output.Add(poly[rest[i + 1]]);
+            }
+        }
+
+        static float Cross(Vector2 a, Vector2 b, Vector2 c) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+
+        static bool InTriangle(Vector2 p, Vector2 a, Vector2 b, Vector2 c) => Cross(a, b, p) >= 0f && Cross(b, c, p) >= 0f && Cross(c, a, p) >= 0f;
+
+        static readonly System.Text.RegularExpressions.Regex VertexRe =new System.Text.RegularExpressions.Regex(
             "<vertex\\s+x=\"([^\"]+)\"\\s+y=\"([^\"]+)\"\\s+z=\"([^\"]+)\"");
         static readonly System.Text.RegularExpressions.Regex TriangleRe = new System.Text.RegularExpressions.Regex(
             "<triangle\\s+v1=\"(\\d+)\"\\s+v2=\"(\\d+)\"\\s+v3=\"(\\d+)\"");
@@ -501,7 +652,17 @@ namespace Aidy
                 max = Vector3.Max(max, p);
             }
 
-            Vector2 pocket = axis == MountAxis.MagnetPlusX ? FindPocket(src, min, max) : Vector2.zero;
+            if (axis == MountAxis.TopPadZUp)
+            {
+                src = FirstPart(src, min, max);
+                min = max = src[0];
+                foreach (Vector3 p in src)
+                {
+                    min = Vector3.Min(min, p);
+                    max = Vector3.Max(max, p);
+                }
+            }
+            Vector2 pocket = axis == MountAxis.MagnetPlusX ? FindPocket(src, min, max) : axis == MountAxis.TopPadZUp ? TopPad(src, max.z) : Vector2.zero;
             int count = src.Count - src.Count % 3;
             var pos = new Vector3[count];
             for (int i = 0; i < count; i++)
@@ -522,6 +683,10 @@ namespace Aidy
                     case MountAxis.SlotTabPlusY:
                         // 右手系 (Z上) → Unity。台座の底面を原点 (本体の表面) にする
                         pos[i] = new Vector3(-p.x, p.y - min.y, p.z);
+                        break;
+                    case MountAxis.TopPadZUp:
+                        // 底面の取り付け面ローカル (+Y=下, +Z=正面, +X=正面から見て右) へ。上面の中心を原点にする
+                        pos[i] = new Vector3(p.x - pocket.x, max.z - p.z, -(p.y - pocket.y));
                         break;
                     default:
                         // くぼみのある +X 面が本体側 (外向き = -X)、長手方向 +Y を正面へ
@@ -574,6 +739,33 @@ namespace Aidy
             mesh.triangles = idx;
             mesh.RecalculateBounds();
             return mesh;
+        }
+
+        /// <summary>X の真ん中に隙間があれば (左右 2 つ入りのモデル)、X が小さい側の三角形だけ返す。</summary>
+        static List<Vector3> FirstPart(List<Vector3> src, Vector3 min, Vector3 max)
+        {
+            float mid = (min.x + max.x) * 0.5f;
+            var part = new List<Vector3>();
+            for (int i = 0; i + 2 < src.Count; i += 3)
+            {
+                float x = Mathf.Max(src[i].x, Mathf.Max(src[i + 1].x, src[i + 2].x));
+                if (Mathf.Min(src[i].x, Mathf.Min(src[i + 1].x, src[i + 2].x)) < mid && x >= mid) return src; // 真ん中をまたぐ = 1 つのモデル
+                if (x < mid) part.AddRange(new[] { src[i], src[i + 1], src[i + 2] });
+            }
+            return part.Count >= 3 ? part : src;
+        }
+
+        /// <summary>上面 (Z = top) の平らな面の中心 (x, y)。</summary>
+        static Vector2 TopPad(List<Vector3> src, float top)
+        {
+            Vector2 lo = new Vector2(float.MaxValue, float.MaxValue), hi = -lo;
+            foreach (Vector3 p in src)
+            {
+                if (p.z < top - 0.05f) continue;
+                lo = Vector2.Min(lo, p);
+                hi = Vector2.Max(hi, p);
+            }
+            return (lo + hi) * 0.5f;
         }
 
         /// <summary>
