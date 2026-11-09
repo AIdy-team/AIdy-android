@@ -10,6 +10,8 @@ import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.URI
+import java.net.URISyntaxException
 import java.net.URL
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -184,21 +186,32 @@ object DiaryComposer {
 }
 
 /**
- * Wi-Fi 経由で Aidy 本体から会話ログを取得する。
- * 本体側 API: GET http://{host}/api/logs?date=yyyy-MM-dd
- *   200 → {"date":"2026-10-23","logs":[{"time":"08:12","speaker":"user","text":"おはよう"}, ...],
- *          "title":"(任意)","summary":"(任意)","mood":"(任意: happy/normal/tired)"}
- *   404 → その日のログなし
+ * Wi-Fi 経由で Aidy 本体 (http://{host}) と話す。口の形は AIdy_アプリ連携_仕様.md のとおり。
+ * すべての通信に合言葉 (ヘッダー X-Aidy-Token) が必要。401・403 はどちらも「合言葉が違います」として扱う。
+ * まだ本体にない口 (設定・ようす・予定の書き込み・話しかけ) は
+ * 設定画面の「今後の開発予定」に載せるだけで、ここには実装しない。
  */
 object AidyDeviceLink {
-    const val DefaultHost = "aidy.local"
     private const val HostKey = "aidy.device.host"
+    private const val TokenKey = "aidy.device.token"
     private const val LastSyncKey = "aidy.device.lastSync"
     private const val TimeoutMs = 4000
 
+    /** 本体のアドレス ("192.168.1.23:8090" など、QR の host の部分)。未設定なら空文字。 */
     var host: String
-        get() = Prefs.getString(HostKey, DefaultHost)
-        set(value) = Prefs.putString(HostKey, value)
+        get() = Prefs.getString(HostKey, "")
+        set(value) = Prefs.putString(HostKey, value.trim())
+
+    /** 合言葉 (QR の "t=" の後ろ)。未設定なら空文字。画面には伏せ字でしか出さないこと。 */
+    var token: String
+        get() = Prefs.getString(TokenKey, "")
+        set(value) = Prefs.putString(TokenKey, value.trim())
+
+    /** 直前に /api/ping が答えた展示モードかどうか。 */
+    var exhibit: Boolean = false
+        private set
+
+    val isConfigured get() = host.isNotEmpty() && token.isNotEmpty()
 
     val lastSyncLabel: String
         get() {
@@ -206,26 +219,78 @@ object AidyDeviceLink {
             return if (t.isEmpty()) "まだ本体と同期していません" else "最終同期: $t"
         }
 
-    data class Result(val ok: Boolean, val message: String, val updated: Int)
+    data class Result(val ok: Boolean, val message: String, val updated: Int = 0)
+    data class WeekEvent(val time: String, val end: String, val title: String)
+    data class WeekTodo(val label: String, val text: String)
+    data class WeekDay(val date: String, val events: List<WeekEvent>, val todo: List<WeekTodo>)
+    data class WeekResult(val ok: Boolean, val days: List<WeekDay>, val synced: Long, val error: String?)
+
+    private fun open(path: String): HttpURLConnection {
+        val conn = URL("http://$host$path").openConnection() as HttpURLConnection
+        conn.connectTimeout = TimeoutMs
+        conn.readTimeout = TimeoutMs
+        conn.setRequestProperty("X-Aidy-Token", token)
+        return conn
+    }
+
+    private fun openPost(path: String, body: JSONObject): HttpURLConnection {
+        val conn = URL("http://$host$path").openConnection() as HttpURLConnection
+        conn.connectTimeout = TimeoutMs
+        conn.readTimeout = TimeoutMs
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.setRequestProperty("X-Aidy-Token", token)
+        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+        return conn
+    }
+
+    /** 接続エラー・401・403 の言い回しをアプリ全体でそろえる。 */
+    private fun errorMessage(code: Int?) = when {
+        code == 401 || code == 403 -> "合言葉が違います。本体のQRを読み直してください"
+        code == null -> "Aidy本体につながりません ($host)"
+        else -> "本体でエラーが起きました ($code)"
+    }
+
+    /** GET /api/ping。設定画面の「保存して接続を試す」で使う。 */
+    suspend fun ping(): Result = withContext(Dispatchers.IO) {
+        if (host.isEmpty() || token.isEmpty()) return@withContext Result(false, "住所と合言葉を入れてください")
+        try {
+            val conn = open("/api/ping")
+            try {
+                val code = conn.responseCode
+                if (code != 200) return@withContext Result(false, errorMessage(code))
+                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                exhibit = JSONObject(body).optBoolean("exhibit", false)
+                Result(true, "Aidy本体につながりました")
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: IOException) {
+            Result(false, errorMessage(null))
+        }
+    }
 
     /** 今日から days 日分さかのぼってログを取得し、日記を作り直して保存する。 */
     suspend fun syncRecent(days: Int): Result = withContext(Dispatchers.IO) {
+        if (host.isEmpty() || token.isEmpty()) return@withContext Result(false, "本体と接続していません (設定 > Aidy本体と接続)")
+
         var updated = 0
         for (i in 0 until days) {
             val date = LocalDate.now().minusDays(i.toLong()).key()
             val body: String
             try {
-                val conn = URL("http://$host/api/logs?date=$date").openConnection() as HttpURLConnection
-                conn.connectTimeout = TimeoutMs
-                conn.readTimeout = TimeoutMs
+                val conn = open("/api/logs?date=$date")
                 try {
-                    if (conn.responseCode != 200) continue // 404 等 = その日のログなし
+                    val code = conn.responseCode
+                    if (code == 401 || code == 403) return@withContext Result(false, errorMessage(code), updated)
+                    if (code != 200) continue // 404 等 = その日のログなし
                     body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
                 } finally {
                     conn.disconnect()
                 }
             } catch (e: IOException) {
-                return@withContext Result(false, "Aidy本体に接続できませんでした ($host)", updated)
+                return@withContext Result(false, errorMessage(null), updated)
             }
 
             val entry = try {
@@ -244,6 +309,169 @@ object AidyDeviceLink {
         }
         Prefs.putString(LastSyncKey, LocalDateTime.now().format(DateTimeFormatter.ofPattern("M/d HH:mm")))
         Result(true, if (updated > 0) "${updated}日分の日記を更新しました" else "新しい会話ログはありませんでした", updated)
+    }
+
+    /**
+     * 本体の QR の中身 ("http://192.168.1.23:8090/?t=AbCdEf123456") から住所と合言葉を取り出す。
+     * 読めなければ null。
+     */
+    fun parseQr(raw: String): Pair<String, String>? {
+        val text = raw.trim()
+        return try {
+            val uri = URI(text)
+            val h = uri.authority ?: return null
+            val t = (uri.query ?: return null).split("&")
+                .map { it.split("=", limit = 2) }
+                .firstOrNull { it.size == 2 && it[0] == "t" }
+                ?.get(1) ?: return null
+            if (h.isEmpty() || t.isEmpty()) null else h to t
+        } catch (e: URISyntaxException) {
+            null
+        }
+    }
+
+    /** GET /api/week (読むだけ)。今日から7日分の予定・やることを取得する。 */
+    suspend fun fetchWeek(): WeekResult = withContext(Dispatchers.IO) {
+        if (host.isEmpty() || token.isEmpty()) return@withContext WeekResult(false, emptyList(), 0, "本体と接続していません")
+        try {
+            val conn = open("/api/week")
+            try {
+                val code = conn.responseCode
+                if (code != 200) return@withContext WeekResult(false, emptyList(), 0, errorMessage(code))
+                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val o = JSONObject(body)
+                val arr = o.optJSONArray("days") ?: JSONArray()
+                val days = (0 until arr.length()).map { i ->
+                    val d = arr.getJSONObject(i)
+                    val events = (d.optJSONArray("events") ?: JSONArray()).let { ea ->
+                        (0 until ea.length()).map { j -> ea.getJSONObject(j).let { WeekEvent(it.optString("time"), it.optString("end"), it.optString("title")) } }
+                    }
+                    val todo = (d.optJSONArray("todo") ?: JSONArray()).let { ta ->
+                        (0 until ta.length()).map { j -> ta.getJSONObject(j).let { WeekTodo(it.optString("label"), it.optString("text")) } }
+                    }
+                    WeekDay(d.optString("date"), events, todo)
+                }
+                WeekResult(true, days, o.optLong("synced", 0), null)
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: IOException) {
+            WeekResult(false, emptyList(), 0, errorMessage(null))
+        } catch (e: Exception) {
+            Log.w("AIDY", "week の解析に失敗: ${e.message}")
+            WeekResult(false, emptyList(), 0, "本体からの返事を読み取れませんでした")
+        }
+    }
+
+    data class DaysResult(val ok: Boolean, val days: Set<String>, val error: String?)
+
+    /** GET /api/days。会話・記録がある日の一覧 ("yyyyMMdd") を "yyyy-MM-dd" に揃えて返す。 */
+    suspend fun fetchDays(): DaysResult = withContext(Dispatchers.IO) {
+        if (host.isEmpty() || token.isEmpty()) return@withContext DaysResult(false, emptySet(), "本体と接続していません")
+        try {
+            val conn = open("/api/days")
+            try {
+                val code = conn.responseCode
+                if (code != 200) return@withContext DaysResult(false, emptySet(), errorMessage(code))
+                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val arr = JSONObject(body).optJSONArray("days") ?: JSONArray()
+                val days = (0 until arr.length()).mapNotNull { i ->
+                    val s = arr.optString(i)
+                    if (s.length == 8) "${s.substring(0, 4)}-${s.substring(4, 6)}-${s.substring(6, 8)}" else null
+                }.toSet()
+                DaysResult(true, days, null)
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: IOException) {
+            DaysResult(false, emptySet(), errorMessage(null))
+        } catch (e: Exception) {
+            Log.w("AIDY", "days の解析に失敗: ${e.message}")
+            DaysResult(false, emptySet(), "本体からの返事を読み取れませんでした")
+        }
+    }
+
+    // ---------------------------------------------------------------- 辞書 (FAQ・聞き間違い・読み)
+
+    data class FaqEntry(val q: String, val a: String)
+    data class DictData(val faq: List<FaqEntry>, val asr: List<Pair<String, String>>, val yomi: List<Pair<String, String>>)
+    data class DictResult(val ok: Boolean, val dict: DictData?, val error: String?)
+
+    private fun stringList(arr: JSONArray?): List<String> =
+        arr?.let { (0 until it.length()).map { i -> it.optString(i) } } ?: emptyList()
+
+    private fun pairList(arr: JSONArray?): List<Pair<String, String>> =
+        arr?.let {
+            (0 until it.length()).mapNotNull { i ->
+                val pair = it.optJSONArray(i)
+                if (pair == null || pair.length() < 2) null else pair.optString(0) to pair.optString(1)
+            }
+        } ?: emptyList()
+
+    private fun parseDict(o: JSONObject): DictData {
+        val faqArr = o.optJSONArray("faq") ?: JSONArray()
+        val faq = (0 until faqArr.length()).map { i ->
+            val f = faqArr.getJSONObject(i)
+            FaqEntry(stringList(f.optJSONArray("q")).firstOrNull() ?: "", stringList(f.optJSONArray("a")).firstOrNull() ?: "")
+        }
+        return DictData(faq, pairList(o.optJSONArray("asr")), pairList(o.optJSONArray("yomi")))
+    }
+
+    /** GET /api/dict。 */
+    suspend fun fetchDict(): DictResult = withContext(Dispatchers.IO) {
+        if (host.isEmpty() || token.isEmpty()) return@withContext DictResult(false, null, "本体と接続していません")
+        try {
+            val conn = open("/api/dict")
+            try {
+                val code = conn.responseCode
+                if (code != 200) return@withContext DictResult(false, null, errorMessage(code))
+                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                DictResult(true, parseDict(JSONObject(body)), null)
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: IOException) {
+            DictResult(false, null, errorMessage(null))
+        } catch (e: Exception) {
+            Log.w("AIDY", "dict の解析に失敗: ${e.message}")
+            DictResult(false, null, "本体からの返事を読み取れませんでした")
+        }
+    }
+
+    /** POST /api/add。kind は "faq" ・ "asr" ・ "yomi"。成功なら更新後の辞書 (dict) が返る。 */
+    suspend fun addDictEntry(kind: String, a: String, b: String): DictResult = withContext(Dispatchers.IO) {
+        if (host.isEmpty() || token.isEmpty()) return@withContext DictResult(false, null, "本体と接続していません")
+        postDict("/api/add", JSONObject().put("kind", kind).put("a", a).put("b", b))
+    }
+
+    /** POST /api/del ("asr" ・ "yomi" は key、"faq" は idx)。成功なら更新後の辞書 (dict) が返る。 */
+    suspend fun deleteDictEntry(kind: String, key: String? = null, idx: Int? = null): DictResult = withContext(Dispatchers.IO) {
+        if (host.isEmpty() || token.isEmpty()) return@withContext DictResult(false, null, "本体と接続していません")
+        val body = JSONObject().put("kind", kind)
+        if (key != null) body.put("key", key)
+        if (idx != null) body.put("idx", idx)
+        postDict("/api/del", body)
+    }
+
+    private fun postDict(path: String, body: JSONObject): DictResult {
+        return try {
+            val conn = openPost(path, body)
+            try {
+                val code = conn.responseCode
+                if (code != 200) return DictResult(false, null, errorMessage(code))
+                val res = JSONObject(conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() })
+                if (!res.optBoolean("ok", false)) return DictResult(false, null, res.optString("error", "できませんでした"))
+                val dictObj = res.optJSONObject("dict")
+                DictResult(true, dictObj?.let { parseDict(it) }, null)
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: IOException) {
+            DictResult(false, null, errorMessage(null))
+        } catch (e: Exception) {
+            Log.w("AIDY", "辞書の更新に失敗: ${e.message}")
+            DictResult(false, null, "本体からの返事を読み取れませんでした")
+        }
     }
 }
 

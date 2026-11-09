@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,6 +33,7 @@ import com.aidy.petrobot.data.ModuleCatalog
 import com.aidy.petrobot.data.ModuleConfig
 import com.aidy.petrobot.data.ModuleKind
 import com.aidy.petrobot.three.HomeRoom
+import kotlinx.coroutines.launch
 
 // ---------------------------------------------------------------- PAGE 0: ホーム (3D ペットルーム)
 
@@ -130,6 +133,9 @@ fun RemotePage() {
 
 @Composable
 fun SettingsPage(diary: DiaryState, onOpenDiary: () -> Unit) {
+    var showDictManager by remember { mutableStateOf(false) }
+    if (showDictManager) DictManagerDialog(onDismiss = { showDictManager = false })
+
     ScrollPage(Modifier.background(Theme.Device)) {
         SectionTitle("ロボット設定", true)
         Card(null, Color.Unspecified, Color.Unspecified, "アセンブリ構造", "本体v2_モデル.obj (透明化防止完全対応)") { Icon(IconId.Check, 14.dp, Theme.Green) }
@@ -146,9 +152,107 @@ fun SettingsPage(diary: DiaryState, onOpenDiary: () -> Unit) {
         SectionTitle("操作 & ネットワーク", false)
         Card(null, Color.Unspecified, Color.Unspecified, "モジュール自動合体", "パーツSocketアタッチ機能 (ON)") { AidySwitch(true) }
         Card(null, Color.Unspecified, Color.Unspecified, "Wi-Fi 接続", "AIDY-5G-2.4G (接続済み)") { Icon(IconId.Wifi, 16.dp, Theme.Green) }
-        Card(IconId.Aidy, Theme.Primary, Theme.PrimaryLight, "Aidy本体の会話ログ", AidyDeviceLink.host + " から Wi-Fi で日記を同期", onClick = onOpenDiary) {
+
+        SectionTitle("Aidy本体と接続", false)
+        val hostLabel = if (AidyDeviceLink.host.isEmpty()) "未設定（下で住所と合言葉を入れてね）" else AidyDeviceLink.host
+        Card(IconId.Aidy, Theme.Primary, Theme.PrimaryLight, "Aidy本体の会話ログ", "$hostLabel から Wi-Fi で日記を同期", onClick = onOpenDiary) {
             Icon(IconId.ChevronRight, 12.dp, Theme.Slate400)
         }
+        DeviceLinkCard()
+        Card(IconId.Book, Theme.hex(0x8b5cf6), Theme.hex(0xf3e8ff), "辞書 (よくある質問・聞き間違い・読み)", "本体の返事をカスタマイズする", onClick = { showDictManager = true }) {
+            Icon(IconId.ChevronRight, 12.dp, Theme.Slate400)
+        }
+
+        SectionTitle("今後の開発予定", false)
+        FutureFeatureList()
+    }
+}
+
+// ---------------------------------------------------------------- 設定: Aidy本体と接続 (住所・合言葉)
+
+/** 住所 (IP:ポート) と合言葉を、カメラでの QR 読み取りか手入力で設定し、/api/ping で接続を確かめるカード。 */
+@Composable
+private fun DeviceLinkCard() {
+    val scope = rememberCoroutineScope()
+    var host by remember { mutableStateOf(AidyDeviceLink.host) }
+    var token by remember { mutableStateOf(AidyDeviceLink.token) }
+    var checking by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf(if (AidyDeviceLink.isConfigured) "保存済み。「保存して接続を試す」で確かめてね" else "まだ設定されていません") }
+    var statusColor by remember { mutableStateOf(Theme.TextSub) }
+    var showScanner by remember { mutableStateOf(false) }
+
+    fun testConnect() {
+        if (checking) return
+        AidyDeviceLink.host = host
+        AidyDeviceLink.token = token
+        checking = true
+        statusColor = Theme.Slate600
+        status = "接続を確認中…"
+        scope.launch {
+            val r = AidyDeviceLink.ping()
+            checking = false
+            statusColor = if (r.ok) Theme.Green else Theme.hex(0xef4444)
+            status = r.message
+        }
+    }
+
+    if (showScanner) {
+        QrScannerDialog(
+            onResult = { h, t ->
+                host = h
+                token = t
+                showScanner = false
+                testConnect()
+            },
+            onDismiss = { showScanner = false },
+        )
+    }
+
+    Column(
+        Modifier.fillMaxWidth().box(Color.White, 16.dp, 1.dp, Theme.Slate100).padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Label("本体のアドレス (IP:ポート)", 11f, Theme.TextSub, true)
+        Input(host, { host = it.take(64) }, "例: 192.168.1.23:8090", false)
+        Label("合言葉 (本体の QR の t= の後ろ)", 11f, Theme.TextSub, true)
+        Input(token, { token = it.take(64) }, "QRコードの合言葉", false, password = true)
+        Label(status, 12f, statusColor, true)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            SmallButton("QRコードを読み取る", Theme.Slate100, Theme.Slate600) { showScanner = true }
+            Box(Modifier.weight(1f))
+            SmallButton("保存して接続を試す", Theme.Primary, Color.White) { testConnect() }
+        }
+    }
+    Spacer(Modifier.height(10.dp))
+}
+
+// ---------------------------------------------------------------- 設定: 今後の開発予定 (仕様書にあるが本体・アプリにまだない口)
+
+/**
+ * 仕様書 (AIdy_アプリ連携_仕様.md) にあっても、まだこのアプリ (または本体) にない機能をまとめたリスト。
+ * 口ができたときにすぐ実装できるよう、どの API に対応するかをここに残しておく。
+ */
+@Composable
+private fun FutureFeatureList() {
+    Column(
+        Modifier.fillMaxWidth().background(Theme.Slate100, RoundedCornerShape(16.dp)).padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Label("下は本体側にまだ口が無いので、このアプリからは作れません。本体が対応したら実装してください。", 11f, Theme.TextSub)
+        FutureRow("音量・話す速さ", "GET/POST /api/settings (本体側が指示書の段階1で対応予定)")
+        FutureRow("本体の今のようす (表情・人・曲・タイマー)", "GET /api/status (本体側が指示書の段階2で対応予定)")
+        FutureRow("予定をまとめて見る・やることを足す", "GET /api/schedule ・ POST /api/todo (本体側が指示書の段階3で対応予定)")
+        FutureRow("文字で話させる・話しかける", "POST /api/say ・ POST /api/talk (本体側が指示書の段階4で対応予定)")
+        FutureRow("スマホのマイクで話しかける", "POST /api/speech (本体側が指示書の段階5で対応予定)")
+    }
+    Spacer(Modifier.height(10.dp))
+}
+
+@Composable
+private fun FutureRow(title: String, sub: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Label("・$title", 12f, Theme.TextMain, true)
+        Label(sub, 11f, Theme.TextSub)
     }
 }
 

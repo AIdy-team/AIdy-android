@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,9 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -100,6 +97,13 @@ class DiaryState {
     var autoSynced = false
     val mascot = MascotState()
 
+    // 本体の /api/week (今週の予定、読むだけ)
+    var deviceWeekDays by mutableStateOf<List<AidyDeviceLink.WeekDay>>(emptyList())
+    var deviceWeekStatus by mutableStateOf("「同期」を押すと本体の今週の予定を取得します")
+
+    // 本体の /api/days (会話・記録がある日、同期前でもカレンダーに印をつける)
+    var deviceDays by mutableStateOf<Set<String>>(emptySet())
+
     /**
      * 保存データ (日記・予定) は Compose の状態ではないので、それを読む部品はこれを呼んで
      * 保存・同期・時刻の変化で描き直されるようにする。
@@ -157,6 +161,22 @@ fun DiaryPage(state: DiaryState, shown: Boolean) {
             state.mascot.react(if (r.ok) AidyFace.Happy else AidyFace.Sleepy, 1.6f)
             if (r.updated > 0) state.version++
         }
+        scope.launch {
+            val w = AidyDeviceLink.fetchWeek()
+            if (w.ok) {
+                state.deviceWeekDays = w.days
+                state.deviceWeekStatus = if (w.synced > 0)
+                    "Googleカレンダー同期: " + java.time.Instant.ofEpochSecond(w.synced).atZone(java.time.ZoneId.systemDefault())
+                        .format(DateTimeFormatter.ofPattern("M/d HH:mm"))
+                else "本体がGoogleカレンダーにまだつながっていません"
+            } else {
+                state.deviceWeekStatus = w.error ?: "本体からの返事を読み取れませんでした"
+            }
+        }
+        scope.launch {
+            val d = AidyDeviceLink.fetchDays()
+            if (d.ok) state.deviceDays = d.days
+        }
     }
     // ページが表示されたとき。初回だけ本体と自動同期する
     LaunchedEffect(shown) {
@@ -198,6 +218,8 @@ fun DiaryPage(state: DiaryState, shown: Boolean) {
         }
         Spacer(Modifier.height(14.dp))
         Calendar(state)
+        Spacer(Modifier.height(12.dp))
+        DeviceWeekCard(state)
         Spacer(Modifier.height(12.dp))
 
         // ---- Entry
@@ -295,6 +317,9 @@ private fun DayCell(state: DiaryState, date: LocalDate, today: LocalDate) {
             val face = DiaryComposer.faceFor(entry.mood)
             val bmp = remember(face, px) { AidyMascotArt.get(face, px, 16f) }
             Image(bmp, null, Modifier.align(Alignment.TopCenter).padding(top = 26.dp).size(16.dp))
+        } else if (state.deviceDays.contains(date.key())) {
+            // 本体にはあるがまだ同期していない会話 (/api/days)。同期すると日記になる
+            Box(Modifier.align(Alignment.TopCenter).padding(top = 32.dp).size(6.dp).background(Theme.Slate300, RoundedCornerShape(3.dp)))
         }
         val plans = ScheduleStore.forDate(date)
         val shownCount = if (entry == null) min(plans.size, MaxChips) else 0 // 日記のある日はミニ Aidy を優先
@@ -314,6 +339,36 @@ private fun DayCell(state: DiaryState, date: LocalDate, today: LocalDate) {
         }
         // 表示しきれない予定の件数 (右上の「+1」)
         if (hidden > 0) Label("+$hidden", 8f, Amber, true, Modifier.align(Alignment.TopEnd).padding(top = 3.dp, end = 2.dp))
+    }
+}
+
+/** 本体 (Google カレンダーの控え + 本体のやることリスト) と同期する今週の予定。書き込みはまだない。 */
+@Composable
+private fun DeviceWeekCard(state: DiaryState) {
+    Column(cardModifier().padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Label("今週の予定（本体と同期）", 13f, Theme.TextMain, true)
+        Label(state.deviceWeekStatus, 11f, Theme.TextSub)
+        if (state.deviceWeekDays.isEmpty()) {
+            Label("予定はありませんでした", 12f, Theme.Slate400)
+        } else {
+            for (d in state.deviceWeekDays) DeviceWeekRow(d)
+        }
+    }
+}
+
+@Composable
+private fun DeviceWeekRow(d: AidyDeviceLink.WeekDay) {
+    val label = runCatching { LocalDate.parse(d.date) }
+        .getOrNull()
+        ?.let { "${it.monthValue}/${it.dayOfMonth}（${WeekLabels[it.dow()]}）" }
+        ?: d.date
+    val parts = buildList {
+        d.events.forEach { add("${it.time} ${it.title}") }
+        d.todo.forEach { add("${it.label} ${it.text}") }
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Label(label, 12f, Theme.TextMain, true, Modifier.widthIn(min = 56.dp))
+        Label(if (parts.isNotEmpty()) parts.joinToString(" ・ ") else "予定なし", 12f, if (parts.isNotEmpty()) Theme.TextMain else Theme.Slate400, modifier = Modifier.weight(1f))
     }
 }
 
@@ -412,14 +467,6 @@ private fun EmptyCard(state: DiaryState, onFetch: () -> Unit) {
             Label("Aidyから会話ログを受け取る", 13f, Color.White, true)
         }
     }
-}
-
-@Composable
-private fun SmallButton(text: String, bg: Color, fg: Color, onClick: () -> Unit) {
-    Box(
-        Modifier.pressable(0.95f, onClick = onClick).background(bg, RoundedCornerShape(14.dp)).padding(horizontal = 14.dp, vertical = 7.dp),
-        contentAlignment = Alignment.Center,
-    ) { Label(text, 12f, fg, true) }
 }
 
 @Composable
@@ -526,24 +573,3 @@ private fun Editor(state: DiaryState, item: ScheduleItem) {
     }
 }
 
-/** 角丸の 1 行 / 複数行テキスト入力。 */
-@Composable
-private fun Input(value: String, onChange: (String) -> Unit, placeholder: String, multiline: Boolean) {
-    BasicTextField(
-        value = value,
-        onValueChange = onChange,
-        singleLine = !multiline,
-        textStyle = TextStyle(color = Theme.TextMain, fontSize = 13.sp),
-        cursorBrush = SolidColor(Theme.Primary),
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(if (multiline) 64.dp else 38.dp)
-            .box(Theme.Device, 10.dp, border = Theme.Border),
-        decorationBox = { inner ->
-            Box(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = if (multiline) Alignment.TopStart else Alignment.CenterStart) {
-                if (value.isEmpty()) Label(placeholder, 13f, Theme.Slate400)
-                inner()
-            }
-        },
-    )
-}
