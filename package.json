@@ -1,22 +1,46 @@
 {
-  "name": "aidy-rn",
+  "name": "aidy-react-native",
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-three/fiber": "^9.8.2",
+    "@shopify/react-native-skia": "2.14.0",
+    "babel-preset-expo": "~58.0.0",
     "expo": "~58.0.23",
+    "expo-asset": "~58.0.20",
+    "expo-build-properties": "~58.0.12",
+    "expo-camera": "~58.0.14",
+    "expo-dev-client": "~58.0.18",
+    "expo-file-system": "~58.0.13",
+    "expo-gl": "~58.0.4",
+    "expo-media-library": "~58.0.13",
+    "expo-sensors": "~58.0.4",
     "expo-status-bar": "~58.0.4",
+    "fflate": "^0.8.3",
     "react": "19.3.0",
-    "react-native": "0.88.1"
+    "react-native": "0.88.1",
+    "react-native-gesture-handler": "~3.3.0",
+    "react-native-pager-view": "9.0.7",
+    "react-native-safe-area-context": "~5.11.1",
+    "three": "^0.187.0"
   },
   "devDependencies": {
+    "@types/node": "^26.6.6",
     "@types/react": "~19.3.0",
+    "@types/three": "^0.187.0",
+    "eslint": "^9.0.0",
+    "eslint-config-expo": "~58.0.4",
     "typescript": "~6.0.3"
   },
   "scripts": {
+    "sync-assets": "node scripts/syncAssets.js",
+    "prestart": "npm run sync-assets",
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web"
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "lint": "expo lint"
   },
   "private": true
 }

@@ -39,3 +39,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Unity 側から自動コピーされるモデル・画像 (scripts/syncAssets.js)
+/src/assets/
