@@ -41,7 +41,7 @@ object ModulePreview {
     /** 代表のスロット: 耳=上面, 尻尾=背面, 足=底面, 手=左面。 */
     private fun sampleSlot(kind: ModuleKind): BodySlot? {
         val face = when {
-            kind == ModuleKind.Ear -> "top"
+            kind == ModuleKind.Ear || kind == ModuleKind.Hat -> "top"
             ModuleCatalog.isTail(kind) -> "back"
             kind == ModuleKind.Legs -> "bottom"
             else -> "left"

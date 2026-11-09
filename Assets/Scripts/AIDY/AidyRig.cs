@@ -147,6 +147,22 @@ namespace Aidy
                     swing.Add(pivot);
                     break;
                 }
+                case ModuleKind.Hat:
+                {
+                    // シルクハット: 平らな底を上面に置くだけ (動かない)
+                    Mesh hat = AidyModelLoader.Load(kind);
+                    if (hat != null)
+                    {
+                        var go = AidyMeshes.Create("Hat", f, hat, satin, true, true);
+                        go.transform.localScale = Vector3.one * mm;
+                    }
+                    else
+                    {
+                        var go = AidyMeshes.Create("Hat", f, AidyMeshes.Cylinder(25f * mm, 25f * mm, 35f * mm, 24), satin, true, true);
+                        go.transform.localPosition = new Vector3(0, 17.5f * mm, 0);
+                    }
+                    break;
+                }
                 case ModuleKind.Ear:
                 {
                     Mesh ear = AidyModelLoader.Load(kind);
@@ -164,8 +180,10 @@ namespace Aidy
                 }
                 case ModuleKind.Tail:
                 case ModuleKind.Tail2:
+                case ModuleKind.Tail45:
+                case ModuleKind.TailCurl:
                 {
-                    // 根元で左右に振る (wag)。tail.stl / tail2.stl は差し込み部をスロットに入れ、+Z (背面なら上) へ反る
+                    // 根元で左右に振る (wag)。尻尾のモデルは台座をスロットに当て、+Z (背面なら上) へ反る
                     var wag = new GameObject("TailWag").transform;
                     wag.SetParent(f, false);
                     swing.Add(wag);

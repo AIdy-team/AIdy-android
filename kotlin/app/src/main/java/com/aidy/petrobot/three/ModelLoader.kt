@@ -287,6 +287,8 @@ object ModelLoader {
         val pocket = when (axis) {
             MountAxis.MagnetPlusX -> findPocket(src, lo, hi)
             MountAxis.TopPadZUp -> topPad(src, hi.z)
+            MountAxis.SlotTabPlusY -> faceCenter(src, 1, lo.y)
+            MountAxis.EndPlusX -> faceCenter(src, 0, hi.x)
             else -> 0f to 0f
         }
         val count = src.size - src.size % 3
@@ -300,7 +302,8 @@ object ModelLoader {
                     val cz = (lo.z + hi.z) * 0.5f
                     V3(-(p.x - cx), hi.y - p.y, p.z - cz)
                 }
-                MountAxis.SlotTabPlusY -> V3(-p.x, p.y - lo.y, p.z)
+                MountAxis.SlotTabPlusY -> V3(-(p.x - pocket.first), p.y - lo.y, p.z - pocket.second)
+                MountAxis.EndPlusX -> V3(-(p.y - pocket.first), hi.x - p.x, p.z - pocket.second)
                 MountAxis.TopPadZUp -> V3(p.x - pocket.first, hi.z - p.z, -(p.y - pocket.second))
                 MountAxis.MagnetPlusX -> V3(-(p.z - pocket.second), hi.x - p.x, p.y - pocket.first)
             }
@@ -377,6 +380,17 @@ object ModelLoader {
             x0 = min(x0, p.x); y0 = min(y0, p.y); x1 = max(x1, p.x); y1 = max(y1, p.y)
         }
         return (x0 + x1) * 0.5f to (y0 + y1) * 0.5f
+    }
+
+    /** axis (0=X, 1=Y) の座標が plane の面の中心。残りの 2 軸を (小さい軸, 大きい軸) の順で返す。 */
+    private fun faceCenter(src: List<V3>, axis: Int, plane: Float): Pair<Float, Float> {
+        var a0 = Float.MAX_VALUE; var b0 = Float.MAX_VALUE; var a1 = -Float.MAX_VALUE; var b1 = -Float.MAX_VALUE
+        for (p in src) {
+            if (abs((if (axis == 0) p.x else p.y) - plane) > 0.3f) continue
+            val a = if (axis == 0) p.y else p.x
+            a0 = min(a0, a); b0 = min(b0, p.z); a1 = max(a1, a); b1 = max(b1, p.z)
+        }
+        return if (a0 <= a1) (a0 + a1) * 0.5f to (b0 + b1) * 0.5f else 0f to 0f
     }
 
     /** +X 面のくぼみ (面から 3〜6mm 奥の底面) の中心 (y, z)。見つからなければ全体の中心。 */

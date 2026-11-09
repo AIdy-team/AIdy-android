@@ -25,7 +25,7 @@ import kotlin.math.sqrt
 enum class IconId {
     Gear, ChevronLeft, ChevronRight, House, Gamepad, Camera, Sliders, Brain, Check, XMark,
     Paw, Cubes, Heart, Snowflake, Lightbulb, Plug, Video, Microchip, Plus, Crosshairs,
-    HandPointer, Circle, Wifi, MapPin, Aidy, Book, Ear, Tail, Leg, Hand, Flashlight, Battery
+    HandPointer, Circle, Wifi, MapPin, Aidy, Book, Ear, Tail, Leg, Hand, Flashlight, Battery, Hat
 }
 
 /** 2 次元ベクトル (SDF 用)。 */
@@ -262,6 +262,8 @@ object AidyIcons {
                 poly(p, v(8.6f, 18.8f), v(10f, 11f), v(12f, 8.2f), v(14f, 11f), v(15.4f, 18.8f)),
             )
             IconId.Tail -> u(polyline(p, 3.2f, v(4.5f, 20f), v(8f, 15.5f), v(13f, 14f), v(17f, 10.5f), v(18.5f, 5.5f)), circle(p, 18.6f, 4.8f, 2.4f))
+            // シルクハット: つば + 筒
+            IconId.Hat -> u(box(p, 2.5f, 15.5f, 21.5f, 19f, 1.6f), box(p, 6.5f, 4.5f, 17.5f, 17f, 1.8f))
             IconId.Leg -> u(box(p, 3.5f, 3.5f, 20.5f, 8f, 2f), u(box(p, 5.5f, 6f, 10f, 20.5f, 2f), box(p, 14f, 6f, 18.5f, 20.5f, 2f)))
             // 手モジュール: 本体から横に伸びる角丸の腕
             IconId.Hand -> u(box(p, 2.5f, 8.5f, 17.5f, 15.5f, 3.2f), box(p, 16f, 6.5f, 21.5f, 17.5f, 2.6f))
