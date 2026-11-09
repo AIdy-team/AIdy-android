@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,9 +45,12 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -260,4 +264,36 @@ fun ScrollPage(modifier: Modifier = Modifier, content: @Composable androidx.comp
             .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
         content = content,
     )
+}
+
+/** 角丸の 1 行テキスト入力。password なら入力中の文字を伏せ字にする (合言葉欄など)。 */
+@Composable
+fun Input(value: String, onChange: (String) -> Unit, placeholder: String, multiline: Boolean, password: Boolean = false) {
+    BasicTextField(
+        value = value,
+        onValueChange = onChange,
+        singleLine = !multiline,
+        visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
+        textStyle = TextStyle(color = Theme.TextMain, fontSize = 13.sp),
+        cursorBrush = SolidColor(Theme.Primary),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(if (multiline) 64.dp else 38.dp)
+            .box(Theme.Device, 10.dp, border = Theme.Border),
+        decorationBox = { inner ->
+            Box(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = if (multiline) Alignment.TopStart else Alignment.CenterStart) {
+                if (value.isEmpty()) Label(placeholder, 13f, Theme.Slate400)
+                inner()
+            }
+        },
+    )
+}
+
+/** 角丸の小さいボタン (カード内の「保存」「キャンセル」など)。 */
+@Composable
+fun SmallButton(text: String, bg: Color, fg: Color, onClick: () -> Unit) {
+    Box(
+        Modifier.pressable(0.95f, onClick = onClick).background(bg, RoundedCornerShape(14.dp)).padding(horizontal = 14.dp, vertical = 7.dp),
+        contentAlignment = Alignment.Center,
+    ) { Label(text, 12f, fg, true) }
 }

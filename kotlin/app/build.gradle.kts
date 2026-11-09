@@ -117,4 +117,7 @@ dependencies {
     implementation("androidx.camera:camera-camera2:$camerax")
     implementation("androidx.camera:camera-lifecycle:$camerax")
     implementation("androidx.camera:camera-view:$camerax")
+
+    // 本体との連携用 QR コード読み取り (端末内で完結、通信なし)
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
 }
