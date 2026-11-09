@@ -34,8 +34,8 @@
     "typescript": "~6.0.3"
   },
   "scripts": {
-    "sync-assets": "node scripts/syncAssets.js",
-    "prestart": "npm run sync-assets",
+    "gen-manifest": "node scripts/genManifest.js",
+    "prestart": "npm run gen-manifest",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
