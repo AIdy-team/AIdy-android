@@ -163,11 +163,6 @@ fun RemotePage(visible: Boolean) {
             Icon(IconId.ChevronRight, 12.dp, Theme.Slate400)
         }
 
-        SectionTitle("標準モジュール (モデル合体済み)", false)
-        Card(IconId.Snowflake, Theme.Primary, Theme.Slate100, "リビングエアコン", "温度: 24°C / 自動") { AidySwitch(true) }
-        Card(IconId.Lightbulb, Theme.Primary, Theme.Slate100, "メイン照明", "オン / 100% 輝度") { AidySwitch(true) }
-        Card(IconId.Plug, Theme.Primary, Theme.Slate100, "スマートプラグ", "オフ / タイマー設定") { AidySwitch(false) }
-
         SectionTitle("拡張モジュール (追加3Dモデル連携)", false)
         Card(IconId.Video, Theme.hex(0x8b5cf6), Theme.hex(0xf3e8ff), "カメラフィードモジュール", "拡張OBJモデル接続可能") { Icon(IconId.Plus, 16.dp, Theme.Primary) }
         Card(IconId.Microchip, Theme.hex(0xec4899), Theme.hex(0xfce7f3), "センサーモジュール", "温度/湿度 拡張モジュール") { Icon(IconId.Plus, 16.dp, Theme.Primary) }
@@ -179,28 +174,25 @@ fun RemotePage(visible: Boolean) {
 @Composable
 fun SettingsPage(diary: DiaryState, onOpenDiary: () -> Unit) {
     ScrollPage(Modifier.background(Theme.Device)) {
-        SectionTitle("ロボット設定", true)
-        Card(null, Color.Unspecified, Color.Unspecified, "アセンブリ構造", "本体v2_モデル.obj (透明化防止完全対応)") { Icon(IconId.Check, 14.dp, Theme.Green) }
-
-        SectionTitle("日記", false)
-        Card(null, Color.Unspecified, Color.Unspecified, "カレンダー表示", "週表示に切り替える") {
-            AidySwitch(CalendarSettings.weekView) { on ->
-                CalendarSettings.weekView = on
-                diary.applyWeekView(on)
-            }
-        }
-
-        SectionTitle("操作 & ネットワーク", false)
-        Card(null, Color.Unspecified, Color.Unspecified, "モジュール自動合体", "パーツSocketアタッチ機能 (ON)") { AidySwitch(true) }
-        Card(null, Color.Unspecified, Color.Unspecified, "Wi-Fi 接続", "AIDY-5G-2.4G (接続済み)") { Icon(IconId.Wifi, 16.dp, Theme.Green) }
-
-        SectionTitle("Aidy本体と接続", false)
+        SectionTitle("Aidy本体と接続", true)
         val hostLabel = if (AidyDeviceLink.host.isEmpty()) "未設定（下で住所と合言葉を入れてね）" else AidyDeviceLink.host
         Card(IconId.Aidy, Theme.Primary, Theme.PrimaryLight, "Aidy本体の会話ログ", "$hostLabel から Wi-Fi で日記を同期", onClick = onOpenDiary) {
             Icon(IconId.ChevronRight, 12.dp, Theme.Slate400)
         }
         DeviceLinkCard()
         Label("音量・話す速さ・辞書はリモコンのページにあります", 11f, Theme.TextSub, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
+
+        SectionTitle("ロボット設定", false)
+        Card(null, Color.Unspecified, Color.Unspecified, "アセンブリ構造", "本体v2_モデル.obj (透明化防止完全対応)") { Icon(IconId.Check, 14.dp, Theme.Green) }
+
+        SectionTitle("日記", false)
+        Card(null, Color.Unspecified, Color.Unspecified, "カレンダー表示", "週表示に切り替える") {
+            AidySwitch(diary.weekView, { on -> diary.applyWeekView(on) })
+        }
+
+        SectionTitle("操作 & ネットワーク", false)
+        Card(null, Color.Unspecified, Color.Unspecified, "モジュール自動合体", "パーツSocketアタッチ機能 (ON)") { AidySwitch(true) }
+        Card(null, Color.Unspecified, Color.Unspecified, "Wi-Fi 接続", "AIDY-5G-2.4G (接続済み)") { Icon(IconId.Wifi, 16.dp, Theme.Green) }
 
         SectionTitle("今後の開発予定", false)
         FutureFeatureList()

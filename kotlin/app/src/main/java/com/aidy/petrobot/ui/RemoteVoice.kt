@@ -1,6 +1,22 @@
 package com.aidy.petrobot.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,7 +28,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.border
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -116,6 +135,8 @@ fun VoiceSettingsCard(visible: Boolean) {
     Spacer(Modifier.height(10.dp))
 }
 
+/** 丸いつまみのスライダー (つまみ = 白い丸 + 青い縁、線は太めの角丸)。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SliderRow(
     title: String, value: String, v: Float, range: ClosedFloatingPointRange<Float>, steps: Int,
@@ -132,13 +153,23 @@ private fun SliderRow(
             onValueChangeFinished = onDone,
             valueRange = range,
             steps = steps,
-            colors = SliderDefaults.colors(
-                thumbColor = Theme.Primary,
-                activeTrackColor = Theme.Primary,
-                inactiveTrackColor = Theme.Slate300,
-                activeTickColor = Color.Transparent,
-                inactiveTickColor = Color.Transparent,
-            ),
+            thumb = {
+                Box(
+                    Modifier
+                        .size(26.dp)
+                        .shadow(3.dp, CircleShape)
+                        .background(Color.White, CircleShape)
+                        .border(3.dp, Theme.Primary, CircleShape),
+                )
+            },
+            track = { state ->
+                val f = ((state.value - state.valueRange.start) / (state.valueRange.endInclusive - state.valueRange.start)).coerceIn(0f, 1f)
+                Canvas(Modifier.fillMaxWidth().height(8.dp)) {
+                    val r = CornerRadius(size.height / 2f)
+                    drawRoundRect(Theme.Slate100, cornerRadius = r)
+                    drawRoundRect(Theme.Primary, size = Size(size.width * f, size.height), cornerRadius = r)
+                }
+            },
         )
     }
 }

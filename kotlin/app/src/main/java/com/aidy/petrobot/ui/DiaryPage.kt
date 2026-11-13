@@ -114,10 +114,11 @@ class DiaryState {
         DiaryDemo.seedIfNeeded()
     }
 
-    /** 設定画面から月表示/週表示を切り替える。 */
+    /** 月表示/週表示を切り替える (カレンダー上のボタン・設定画面)。端末に覚えておく。 */
     fun applyWeekView(on: Boolean) {
         if (weekView == on) return
         weekView = on
+        CalendarSettings.weekView = on
         month = YearMonth.from(selected)
         weekAnchor = selected.minusDays(selected.dow().toLong())
     }
@@ -217,6 +218,8 @@ fun DiaryPage(state: DiaryState, shown: Boolean) {
             }
         }
         Spacer(Modifier.height(14.dp))
+        CalendarModeToggle(state)
+        Spacer(Modifier.height(8.dp))
         Calendar(state)
         Spacer(Modifier.height(12.dp))
         DeviceWeekCard(state)
@@ -281,6 +284,50 @@ private fun Calendar(state: DiaryState) {
                     }
                 }
             }
+        }
+    }
+}
+
+/** カレンダーの上: 月表示 / 週表示の切り替え (アイコン付きの 2 つ割りボタン)。 */
+@Composable
+private fun CalendarModeToggle(state: DiaryState) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Label("カレンダー", 13f, Theme.TextSub, true, Modifier.weight(1f).padding(start = 4.dp))
+        Row(Modifier.background(Theme.Slate100, RoundedCornerShape(18.dp)).padding(3.dp)) {
+            for (week in listOf(false, true)) {
+                val on = state.weekView == week
+                Row(
+                    Modifier
+                        .height(32.dp)
+                        .pressable(0.95f) { state.applyWeekView(week) }
+                        .box(if (on) Color.White else Color.Transparent, 15.dp, if (on) 2.dp else 0.dp)
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    CalendarGlyph(week, if (on) Theme.Primary else Theme.Slate400)
+                    Label(if (week) "週" else "月", 12f, if (on) Theme.Primary else Theme.Slate600, true)
+                }
+            }
+        }
+    }
+}
+
+/** カレンダーの絵: 月 = 3 段のマス、週 = 1 段のマス。 */
+@Composable
+private fun CalendarGlyph(week: Boolean, color: Color) {
+    androidx.compose.foundation.Canvas(Modifier.size(16.dp)) {
+        val w = size.width
+        val sw = 1.5.dp.toPx()
+        drawRoundRect(color, androidx.compose.ui.geometry.Offset(sw / 2f, w * 0.14f), androidx.compose.ui.geometry.Size(w - sw, w * 0.82f),
+            androidx.compose.ui.geometry.CornerRadius(w * 0.15f), style = androidx.compose.ui.graphics.drawscope.Stroke(sw))
+        drawRect(color, androidx.compose.ui.geometry.Offset(sw / 2f, w * 0.14f), androidx.compose.ui.geometry.Size(w - sw, w * 0.18f))
+        val rows = if (week) 1 else 3
+        val cell = w * 0.13f
+        for (r in 0 until rows) for (c in 0 until 4) {
+            val x = w * 0.16f + c * w * 0.19f
+            val y = if (week) w * 0.55f else w * 0.42f + r * w * 0.16f
+            drawRect(color, androidx.compose.ui.geometry.Offset(x, y), androidx.compose.ui.geometry.Size(cell, cell * (if (week) 1.6f else 0.8f)))
         }
     }
 }

@@ -156,7 +156,7 @@ fun AidyApp(app: AppState) {
                     }
                 }
                 // ホーム・AR (3D の操作)・日記 (カレンダー端の日付)・リモコン (操作ボタン) は矢印と重なるので隠す (タブ/スワイプで移動)
-                val hide = current == PageDiary || current == PageHome || current == PageAR || current == PageRemote
+                val hide = true // 全ページ: スワイプ・タブで移動 (設定も本体との接続カードと重なるので隠す)
                 NavArrow(IconId.ChevronLeft, current != 0, hide, Modifier.align(Alignment.CenterStart).padding(start = 10.dp)) { goTo(current - 1) }
                 NavArrow(IconId.ChevronRight, current != PageCount - 1, hide, Modifier.align(Alignment.CenterEnd).padding(end = 10.dp)) { goTo(current + 1) }
             }
