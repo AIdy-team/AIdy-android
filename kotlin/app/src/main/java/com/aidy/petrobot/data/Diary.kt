@@ -197,10 +197,26 @@ object AidyDeviceLink {
     private const val LastSyncKey = "aidy.device.lastSync"
     private const val TimeoutMs = 4000
 
+    const val DefaultPort = 8090
+
     /** 本体のアドレス ("192.168.1.23:8090" など、QR の host の部分)。未設定なら空文字。 */
     var host: String
         get() = Prefs.getString(HostKey, "")
-        set(value) = Prefs.putString(HostKey, value.trim())
+        set(value) = Prefs.putString(HostKey, normalizeHost(value))
+
+    /**
+     * 手で入れたアドレスを "ホスト:ポート" にそろえる。
+     * "http://192.168.1.23:8090/" → "192.168.1.23:8090"、ポートが無ければ 8090 を足す。
+     */
+    fun normalizeHost(input: String): String {
+        var s = input.trim().replace("　", "").replace(" ", "")
+        val scheme = s.indexOf("://")
+        if (scheme >= 0) s = s.substring(scheme + 3)
+        s = s.substringBefore('/').substringBefore('?').substringBefore('#')
+        if (s.isEmpty()) return ""
+        val hasPort = if (s.startsWith("[")) s.contains("]:") else s.count { it == ':' } == 1
+        return if (hasPort) s else "$s:$DefaultPort"
+    }
 
     /** 合言葉 (QR の "t=" の後ろ)。未設定なら空文字。画面には伏せ字でしか出さないこと。 */
     var token: String
@@ -225,32 +241,50 @@ object AidyDeviceLink {
     data class WeekDay(val date: String, val events: List<WeekEvent>, val todo: List<WeekTodo>)
     data class WeekResult(val ok: Boolean, val days: List<WeekDay>, val synced: Long, val error: String?)
 
+    /** Wi-Fi 上で開く (DeviceNet 参照)。合言葉はヘッダーで送る。 */
     private fun open(path: String): HttpURLConnection {
-        val conn = URL("http://$host$path").openConnection() as HttpURLConnection
+        val conn = DeviceNet.open(host, path)
         conn.connectTimeout = TimeoutMs
         conn.readTimeout = TimeoutMs
         conn.setRequestProperty("X-Aidy-Token", token)
+        conn.setRequestProperty("Accept", "application/json")
         return conn
     }
 
     private fun openPost(path: String, body: JSONObject): HttpURLConnection {
-        val conn = URL("http://$host$path").openConnection() as HttpURLConnection
-        conn.connectTimeout = TimeoutMs
-        conn.readTimeout = TimeoutMs
+        val conn = open(path)
         conn.requestMethod = "POST"
         conn.doOutput = true
-        conn.setRequestProperty("X-Aidy-Token", token)
         conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
         conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
         return conn
     }
 
-    /** 接続エラー・401・403 の言い回しをアプリ全体でそろえる。 */
-    private fun errorMessage(code: Int?) = when {
-        code == 401 || code == 403 -> "合言葉が違います。本体のQRを読み直してください"
-        code == null -> "Aidy本体につながりません ($host)"
-        else -> "本体でエラーが起きました ($code)"
+    /** 非200 のときに本体が返す {"error": "..."} を読む。 */
+    private fun bodyError(conn: HttpURLConnection): String? = try {
+        conn.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+            ?.let { JSONObject(it).optString("error").ifEmpty { null } }
+    } catch (e: Exception) {
+        null
     }
+
+    /** 接続エラー・401・403 の言い回しをアプリ全体でそろえる。e があれば原因 (時間切れ・名前が引けない等) も添える。 */
+    private fun errorMessage(code: Int?, e: Exception? = null) = when {
+        code == 401 || code == 403 -> "合言葉が違います。本体のQRを読み直してください"
+        code != null -> "本体でエラーが起きました ($code)"
+        e is java.net.UnknownHostException ->
+            "本体の住所 ($host) が見つかりません。.local でなく IP (本体の「本体」タブの下に出ます) で入れてください"
+        DeviceNet.wifiNetwork() == null -> "スマホが Wi-Fi につながっていません。本体と同じ Wi-Fi につないでください"
+        e is java.net.SocketTimeoutException ->
+            "Aidy本体につながりません ($host)。時間切れ: スマホと本体が同じ Wi-Fi か、IP が変わっていないか確かめてください"
+        e is java.net.ConnectException || e is java.net.NoRouteToHostException ->
+            "Aidy本体につながりません ($host)。本体が動いているか・アドレスとポート (8090) を確かめてください"
+        else -> "Aidy本体につながりません ($host)"
+    }
+
+    /** /api/ping が返した本体のホスト名 (機体ごとに違う)。 */
+    var deviceName: String = ""
+        private set
 
     /** GET /api/ping。設定画面の「保存して接続を試す」で使う。 */
     suspend fun ping(): Result = withContext(Dispatchers.IO) {
@@ -261,13 +295,20 @@ object AidyDeviceLink {
                 val code = conn.responseCode
                 if (code != 200) return@withContext Result(false, errorMessage(code))
                 val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                exhibit = JSONObject(body).optBoolean("exhibit", false)
-                Result(true, "Aidy本体につながりました")
+                val o = runCatching { JSONObject(body) }.getOrNull()
+                    ?: return@withContext Result(false, "本体からの返事を読み取れませんでした (ポート番号が違うかも)")
+                exhibit = o.optBoolean("exhibit", false)
+                deviceName = o.optString("host")
+                Result(true, if (deviceName.isNotEmpty()) "Aidy本体 ($deviceName) につながりました" else "Aidy本体につながりました")
             } finally {
                 conn.disconnect()
             }
         } catch (e: IOException) {
-            Result(false, errorMessage(null))
+            Log.w("AIDY", "ping 失敗: ${e.javaClass.simpleName} ${e.message}")
+            Result(false, errorMessage(null, e))
+        } catch (e: Exception) {
+            Log.w("AIDY", "ping 失敗: ${e.javaClass.simpleName} ${e.message}")
+            Result(false, "Aidy本体につながりません ($host): ${e.javaClass.simpleName}")
         }
     }
 
@@ -319,11 +360,11 @@ object AidyDeviceLink {
         val text = raw.trim()
         return try {
             val uri = URI(text)
-            val h = uri.authority ?: return null
-            val t = (uri.query ?: return null).split("&")
+            val h = normalizeHost(uri.rawAuthority ?: return null)
+            val t = (uri.rawQuery ?: return null).split("&")
                 .map { it.split("=", limit = 2) }
                 .firstOrNull { it.size == 2 && it[0] == "t" }
-                ?.get(1) ?: return null
+                ?.get(1)?.let { java.net.URLDecoder.decode(it, "UTF-8").trim() } ?: return null
             if (h.isEmpty() || t.isEmpty()) null else h to t
         } catch (e: URISyntaxException) {
             null
@@ -356,7 +397,7 @@ object AidyDeviceLink {
                 conn.disconnect()
             }
         } catch (e: IOException) {
-            WeekResult(false, emptyList(), 0, errorMessage(null))
+            WeekResult(false, emptyList(), 0, errorMessage(null, e))
         } catch (e: Exception) {
             Log.w("AIDY", "week の解析に失敗: ${e.message}")
             WeekResult(false, emptyList(), 0, "本体からの返事を読み取れませんでした")
@@ -384,7 +425,7 @@ object AidyDeviceLink {
                 conn.disconnect()
             }
         } catch (e: IOException) {
-            DaysResult(false, emptySet(), errorMessage(null))
+            DaysResult(false, emptySet(), errorMessage(null, e))
         } catch (e: Exception) {
             Log.w("AIDY", "days の解析に失敗: ${e.message}")
             DaysResult(false, emptySet(), "本体からの返事を読み取れませんでした")
@@ -431,7 +472,7 @@ object AidyDeviceLink {
                 conn.disconnect()
             }
         } catch (e: IOException) {
-            DictResult(false, null, errorMessage(null))
+            DictResult(false, null, errorMessage(null, e))
         } catch (e: Exception) {
             Log.w("AIDY", "dict の解析に失敗: ${e.message}")
             DictResult(false, null, "本体からの返事を読み取れませんでした")
@@ -467,102 +508,102 @@ object AidyDeviceLink {
                 conn.disconnect()
             }
         } catch (e: IOException) {
-            DictResult(false, null, errorMessage(null))
+            DictResult(false, null, errorMessage(null, e))
         } catch (e: Exception) {
             Log.w("AIDY", "辞書の更新に失敗: ${e.message}")
             DictResult(false, null, "本体からの返事を読み取れませんでした")
         }
     }
 
-    // ------------------------------------------------------------ 音量・話す速さ (/api/settings)
+    // ------------------------------------------------------------ 本体の設定 (/api/settings)
 
     /**
-     * 本体の声の設定。volume = 音量 0〜100 (%)、speed = 話す速さ (1.0 がふつう、0.5〜1.5)。
-     * 本体側の仕様が決まるまでの仮の形 (README の「本体との通信」参照)。
+     * 本体の設定 1 項目 (GET /api/settings の items の 1 つ)。
+     * level は 0〜max。show があればその文字 (「オフ」「少なめ」など) を出し、なければ段階のバーで見せる。
+     * アプリは並び・label・max を本体の返事のまま使う (キーが増えても作り直さなくてよいように)。
      */
-    data class VoiceSettings(val volume: Int, val speed: Float)
+    data class SettingItem(val key: String, val label: String, val level: Int, val max: Int, val value: Double, val show: String)
 
-    /** unsupported = 本体がまだ /api/settings を持っていない (404)。 */
-    data class SettingsResult(val ok: Boolean, val settings: VoiceSettings?, val error: String?, val unsupported: Boolean = false)
+    data class SettingsResult(val ok: Boolean, val items: List<SettingItem>, val error: String?, val unsupported: Boolean = false)
 
-    /** 本体の返事から設定を読む。{"settings": {...}} でも {...} 直下でも、speed の代わりに rate でも読める。 */
-    private fun parseSettings(o: JSONObject): VoiceSettings? {
-        val s = o.optJSONObject("settings") ?: o
-        if (!s.has("volume") && !s.has("speed") && !s.has("rate")) return null
-        val volume = s.optInt("volume", VoiceStore.volume).coerceIn(0, 100)
-        val speed = (if (s.has("speed")) s.optDouble("speed") else s.optDouble("rate", VoiceStore.speed.toDouble())).toFloat()
-        return VoiceSettings(volume, speed.coerceIn(VoiceStore.MinSpeed, VoiceStore.MaxSpeed))
-    }
-
-    private fun settingsError(code: Int?): SettingsResult =
-        if (code == 404) SettingsResult(false, null, "本体がまだ音量・速さの設定に対応していません", unsupported = true)
-        else SettingsResult(false, null, errorMessage(code))
-
-    /** GET /api/settings。読めたら端末にも覚えておく。 */
-    suspend fun fetchSettings(): SettingsResult = withContext(Dispatchers.IO) {
-        if (host.isEmpty() || token.isEmpty()) return@withContext SettingsResult(false, null, "本体と接続していません")
-        try {
-            val conn = open("/api/settings")
-            try {
-                val code = conn.responseCode
-                if (code != 200) return@withContext settingsError(code)
-                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                val v = parseSettings(JSONObject(body)) ?: return@withContext SettingsResult(false, null, "本体からの返事を読み取れませんでした")
-                VoiceStore.remember(v)
-                SettingsResult(true, v, null)
-            } finally {
-                conn.disconnect()
-            }
-        } catch (e: IOException) {
-            SettingsResult(false, null, errorMessage(null))
-        } catch (e: Exception) {
-            Log.w("AIDY", "settings の解析に失敗: ${e.message}")
-            SettingsResult(false, null, "本体からの返事を読み取れませんでした")
+    private fun parseSettings(o: JSONObject): List<SettingItem>? {
+        val arr = o.optJSONArray("items") ?: return null
+        if (o.has("exhibit")) exhibit = o.optBoolean("exhibit", exhibit)
+        return (0 until arr.length()).mapNotNull { i ->
+            val it = arr.optJSONObject(i) ?: return@mapNotNull null
+            val key = it.optString("key")
+            if (key.isEmpty()) return@mapNotNull null
+            val max = it.optInt("max", 0).coerceAtLeast(0)
+            SettingItem(key, it.optString("label", key), it.optInt("level", 0).coerceIn(0, max), max, it.optDouble("value", 0.0), it.optString("show"))
         }
     }
 
-    /** POST /api/settings {"volume": 60, "speed": 1.0}。返事に設定があればそれを、なければ送った値を覚える。 */
-    suspend fun saveSettings(v: VoiceSettings): SettingsResult = withContext(Dispatchers.IO) {
-        VoiceStore.remember(v)
-        if (host.isEmpty() || token.isEmpty()) return@withContext SettingsResult(false, null, "本体と接続していません (この端末に保存しました)")
+    private fun settingsError(conn: HttpURLConnection, code: Int): SettingsResult = when (code) {
+        404 -> SettingsResult(false, SettingsStore.items, "本体がまだ設定の変更に対応していません", unsupported = true)
+        400 -> SettingsResult(false, SettingsStore.items, bodyError(conn) ?: "key か level が違います")
+        else -> SettingsResult(false, SettingsStore.items, errorMessage(code))
+    }
+
+    private fun readSettings(conn: HttpURLConnection): SettingsResult {
+        val code = conn.responseCode
+        if (code != 200) return settingsError(conn, code)
+        val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        val items = parseSettings(JSONObject(body)) ?: return SettingsResult(false, SettingsStore.items, "本体からの返事を読み取れませんでした")
+        SettingsStore.items = items
+        return SettingsResult(true, items, null)
+    }
+
+    /** GET /api/settings。読めたら端末にも覚えておく (つながっていないときの表示用)。 */
+    suspend fun fetchSettings(): SettingsResult = withContext(Dispatchers.IO) {
+        if (host.isEmpty() || token.isEmpty()) return@withContext SettingsResult(false, SettingsStore.items, "本体と接続していません")
         try {
-            val body = JSONObject().put("volume", v.volume).put("speed", Math.round(v.speed * 100) / 100.0)
-            val conn = openPost("/api/settings", body)
-            try {
-                val code = conn.responseCode
-                if (code != 200) return@withContext settingsError(code)
-                val text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                val res = runCatching { JSONObject(text) }.getOrNull()
-                if (res != null && res.has("ok") && !res.optBoolean("ok")) return@withContext SettingsResult(false, null, res.optString("error", "できませんでした"))
-                val now = res?.let { parseSettings(it) } ?: v
-                VoiceStore.remember(now)
-                SettingsResult(true, now, null)
-            } finally {
-                conn.disconnect()
-            }
+            val conn = open("/api/settings")
+            try { readSettings(conn) } finally { conn.disconnect() }
         } catch (e: IOException) {
-            SettingsResult(false, null, errorMessage(null))
+            SettingsResult(false, SettingsStore.items, errorMessage(null, e))
+        } catch (e: Exception) {
+            Log.w("AIDY", "settings の解析に失敗: ${e.message}")
+            SettingsResult(false, SettingsStore.items, "本体からの返事を読み取れませんでした")
+        }
+    }
+
+    /** POST /api/settings {"key": "voice_db", "level": 4}。返事は GET と同じ一覧。 */
+    suspend fun saveSetting(key: String, level: Int): SettingsResult = withContext(Dispatchers.IO) {
+        if (host.isEmpty() || token.isEmpty()) return@withContext SettingsResult(false, SettingsStore.items, "本体と接続していません")
+        try {
+            val conn = openPost("/api/settings", JSONObject().put("key", key).put("level", level))
+            try { readSettings(conn) } finally { conn.disconnect() }
+        } catch (e: IOException) {
+            SettingsResult(false, SettingsStore.items, errorMessage(null, e))
         } catch (e: Exception) {
             Log.w("AIDY", "settings の送信に失敗: ${e.message}")
-            SettingsResult(false, null, "本体からの返事を読み取れませんでした")
+            SettingsResult(false, SettingsStore.items, "本体からの返事を読み取れませんでした")
         }
     }
 }
 
-/** 最後に知っている声の設定 (本体とつながっていなくてもスライダーに出す用)。 */
-object VoiceStore {
-    const val MinSpeed = 0.5f
-    const val MaxSpeed = 1.5f
-    private const val VolumeKey = "aidy.voice.volume"
-    private const val SpeedKey = "aidy.voice.speed100"
+/** 最後に本体から読めた設定一覧 (本体とつながっていなくても表示する用)。 */
+object SettingsStore {
+    private const val Key = "aidy.device.settings"
 
-    val volume: Int get() = Prefs.getInt(VolumeKey, 60)
-    val speed: Float get() = Prefs.getInt(SpeedKey, 100) / 100f
-
-    fun remember(v: AidyDeviceLink.VoiceSettings) {
-        Prefs.putInt(VolumeKey, v.volume)
-        Prefs.putInt(SpeedKey, Math.round(v.speed * 100f))
-    }
+    var items: List<AidyDeviceLink.SettingItem>
+        get() = try {
+            val arr = JSONArray(Prefs.getString(Key, "[]"))
+            (0 until arr.length()).map { i ->
+                arr.getJSONObject(i).let {
+                    AidyDeviceLink.SettingItem(it.optString("key"), it.optString("label"), it.optInt("level"), it.optInt("max"), it.optDouble("value", 0.0), it.optString("show"))
+                }
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+        set(value) {
+            val arr = JSONArray()
+            value.forEach {
+                arr.put(JSONObject().put("key", it.key).put("label", it.label).put("level", it.level).put("max", it.max).put("value", it.value).put("show", it.show))
+            }
+            Prefs.putString(Key, arr.toString())
+        }
 }
 
 /** 日記カレンダーの表示設定 (月表示 / 週表示)。設定画面から切り替える。 */

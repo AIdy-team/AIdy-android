@@ -45,37 +45,33 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.aidy.petrobot.data.AidyDeviceLink
-import com.aidy.petrobot.data.VoiceStore
+import com.aidy.petrobot.data.SettingsStore
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-/** 話す速さの言葉 (1.0 = ふつう)。 */
-private fun speedLabel(s: Float) = when {
-    s < 0.8f -> "ゆっくり"
-    s < 0.95f -> "少しゆっくり"
-    s <= 1.05f -> "ふつう"
-    s <= 1.3f -> "少しはやい"
-    else -> "はやい"
+/** 本体の画面のどのページの設定か (AIdy_アプリ連携_仕様.md の表)。知らないキーは「その他」。 */
+private fun settingGroup(key: String) = when (key) {
+    "voice_db", "pop", "alarm" -> "音量"
+    "speed", "mic", "gun" -> "速さ・耳"
+    "talk", "brief", "night", "react" -> "動き"
+    else -> "その他"
 }
 
 /**
- * リモコン: 本体の音量・話す速さ (GET/POST /api/settings)。
- * ページが見えたら本体から読み込み、スライダーを離したら本体へ送る。つながっていなくても端末には覚えておく。
+ * リモコン: 本体の設定 (GET/POST /api/settings)。
+ * 本体が返す items の並び・label・max をそのまま使って段階のスライダーを出す。
+ * ページが見えたら本体から読み込み、スライダーを離したら {"key", "level"} を送る (返事の一覧で描き直す)。
  */
 @Composable
 fun VoiceSettingsCard(visible: Boolean) {
     val scope = rememberCoroutineScope()
-    var volume by remember { mutableFloatStateOf(VoiceStore.volume.toFloat()) }
-    var speed by remember { mutableFloatStateOf(VoiceStore.speed) }
+    var items by remember { mutableStateOf(SettingsStore.items) }
     var status by remember { mutableStateOf("") }
     var statusColor by remember { mutableStateOf(Theme.TextSub) }
     var busy by remember { mutableStateOf(false) }
 
     fun show(r: AidyDeviceLink.SettingsResult, okText: String) {
-        r.settings?.let {
-            volume = it.volume.toFloat()
-            speed = it.speed
-        }
+        items = r.items
         status = if (r.ok) okText else r.error ?: "できませんでした"
         statusColor = when {
             r.ok -> Theme.Green
@@ -95,13 +91,12 @@ fun VoiceSettingsCard(visible: Boolean) {
         }
     }
 
-    fun send() {
+    fun send(key: String, level: Int) {
         busy = true
         status = "本体に送信中…"
         statusColor = Theme.Slate600
-        val v = AidyDeviceLink.VoiceSettings(volume.roundToInt(), (speed * 20f).roundToInt() / 20f)
         scope.launch {
-            show(AidyDeviceLink.saveSettings(v), "本体に反映しました")
+            show(AidyDeviceLink.saveSetting(key, level), "本体に反映しました")
             busy = false
         }
     }
@@ -117,22 +112,43 @@ fun VoiceSettingsCard(visible: Boolean) {
                 Icon(IconId.Sliders, 18.dp, Theme.Primary)
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Label("Aidyの声", 14f, Theme.TextMain, true)
-                Label("音量と話す速さを本体に送る", 12f, Theme.TextSub)
+                Label("Aidyの設定", 14f, Theme.TextMain, true)
+                Label("声の大きさ・話す速さ・動きを本体に送る", 12f, Theme.TextSub)
             }
             SmallButton("読み込む", Theme.Slate100, Theme.Slate600) { load() }
         }
 
-        SliderRow("音量", "${volume.roundToInt()}%", volume, 0f..100f, 19, { volume = it }, { send() })
-        SliderRow("話す速さ", "${speedLabel(speed)} (×${"%.2f".format(speed)})", speed, VoiceStore.MinSpeed..VoiceStore.MaxSpeed, 19, { speed = it }, { send() })
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Label("ゆっくり", 10f, Theme.Slate400)
-            Label("ふつう ×1.0", 10f, Theme.Slate400)
-            Label("はやい", 10f, Theme.Slate400)
+        if (items.isEmpty()) {
+            Label("本体とつながると、ここに本体の設定が出ます", 12f, Theme.TextSub, modifier = Modifier.padding(top = 6.dp))
+        }
+        var lastGroup = ""
+        items.forEach { item ->
+            val group = settingGroup(item.key)
+            if (group != lastGroup) {
+                lastGroup = group
+                Label(group, 11f, Theme.Slate400, true, Modifier.padding(top = 8.dp))
+            }
+            SettingRow(item, enabled = !busy) { level -> if (level != item.level) send(item.key, level) }
         }
         if (status.isNotEmpty()) Label(status, 11f, statusColor, true)
     }
     Spacer(Modifier.height(10.dp))
+}
+
+/** 設定 1 項目: 名前 + 今の段階 (show の文字か「n / max」) + 0〜max の段階スライダー。 */
+@Composable
+private fun SettingRow(item: AidyDeviceLink.SettingItem, enabled: Boolean, onDone: (Int) -> Unit) {
+    var v by remember(item.key, item.level, item.max) { mutableFloatStateOf(item.level.toFloat()) }
+    val level = v.roundToInt()
+    val shown = if (level == item.level && item.show.isNotEmpty()) item.show else "$level / ${item.max}"
+    if (item.max <= 0) {
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Label(item.label, 13f, Theme.TextMain, true, Modifier.weight(1f))
+            Label(item.show.ifEmpty { "-" }, 13f, Theme.Primary, true)
+        }
+        return
+    }
+    SliderRow(item.label, shown, v, 0f..item.max.toFloat(), (item.max - 1).coerceAtLeast(0), { if (enabled) v = it }, { onDone(v.roundToInt()) })
 }
 
 /** 丸いつまみのスライダー (つまみ = 白い丸 + 青い縁、線は太めの角丸)。 */

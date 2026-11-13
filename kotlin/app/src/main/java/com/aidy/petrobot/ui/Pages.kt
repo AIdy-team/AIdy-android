@@ -214,8 +214,12 @@ private fun DeviceLinkCard() {
 
     fun testConnect() {
         if (checking) return
+        // QR の中身 (http://…/?t=…) をそのままアドレス欄に貼った場合は、住所と合言葉に分ける
+        AidyDeviceLink.parseQr(host)?.let { (h, t) -> host = h; if (token.isBlank()) token = t }
         AidyDeviceLink.host = host
         AidyDeviceLink.token = token
+        host = AidyDeviceLink.host
+        token = AidyDeviceLink.token
         checking = true
         statusColor = Theme.Slate600
         status = "接続を確認中…"
