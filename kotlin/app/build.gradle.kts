@@ -48,9 +48,12 @@ val modulesDir = File(unityRoot, "Modules")
 val resourcesDir = File(unityRoot, "Assets/Resources/AIDY")
 
 val moduleModels = mapOf(
-    "耳" to "ear",
+    "mimi2" to "ear",
     "tail" to "tail",
     "tail2" to "tail2",
+    "尻尾_45" to "tail45",
+    "尻尾_巻き2" to "tail_curl",
+    "シルクハット" to "hat",
     "手_短い" to "hand",
     "手_短い_懐中電灯" to "hand_light",
     "足v1" to "legs",
@@ -117,4 +120,7 @@ dependencies {
     implementation("androidx.camera:camera-camera2:$camerax")
     implementation("androidx.camera:camera-lifecycle:$camerax")
     implementation("androidx.camera:camera-view:$camerax")
+
+    // 本体との連携用 QR コード読み取り (端末内で完結、通信なし)
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
 }

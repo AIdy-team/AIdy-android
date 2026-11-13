@@ -136,7 +136,7 @@ namespace Aidy
 
         static BodySlot SampleSlot(ModuleKind kind)
         {
-            string face = kind == ModuleKind.Ear ? "top" : ModuleCatalog.IsTail(kind) ? "back" : kind == ModuleKind.Legs ? "bottom" : "left";
+            string face = kind == ModuleKind.Ear || kind == ModuleKind.Hat ? "top" : ModuleCatalog.IsTail(kind) ? "back" : kind == ModuleKind.Legs ? "bottom" : "left";
             foreach (BodySlot s in BodyLayout.OnFace(face))
                 if (ModuleCatalog.Fits(kind, s)) return s;
             foreach (BodySlot s in BodyLayout.Slots)

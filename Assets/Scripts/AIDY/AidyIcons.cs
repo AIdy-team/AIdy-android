@@ -8,7 +8,7 @@ namespace Aidy
     {
         Gear, ChevronLeft, ChevronRight, House, Gamepad, Camera, Sliders, Brain, Check, XMark,
         Paw, Cubes, Heart, Snowflake, Lightbulb, Plug, Video, Microchip, Plus, Crosshairs,
-        HandPointer, Circle, Wifi, MapPin, Aidy, Book, Ear, Tail, Leg, Hand, Flashlight, Battery
+        HandPointer, Circle, Wifi, MapPin, Aidy, Book, Ear, Tail, Leg, Hand, Flashlight, Battery, Hat
     }
 
     /// <summary>
@@ -220,6 +220,9 @@ namespace Aidy
                                Poly(p, V(8.6f, 18.8f), V(10, 11), V(12, 8.2f), V(14, 11), V(15.4f, 18.8f)));
                 case IconId.Tail:
                     return U(Polyline(p, 3.2f, V(4.5f, 20), V(8, 15.5f), V(13, 14), V(17, 10.5f), V(18.5f, 5.5f)), Circle(p, 18.6f, 4.8f, 2.4f));
+                case IconId.Hat:
+                    // シルクハット: つば + 筒
+                    return U(Box(p, 2.5f, 15.5f, 21.5f, 19, 1.6f), Box(p, 6.5f, 4.5f, 17.5f, 17, 1.8f));
                 case IconId.Leg:
                     return U(Box(p, 3.5f, 3.5f, 20.5f, 8, 2), U(Box(p, 5.5f, 6, 10, 20.5f, 2), Box(p, 14, 6, 18.5f, 20.5f, 2)));
                 case IconId.Hand:

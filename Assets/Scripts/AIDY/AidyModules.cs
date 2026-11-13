@@ -5,12 +5,12 @@ using UnityEngine;
 namespace Aidy
 {
     /// <summary>本体に取り付けるモジュールの種類。</summary>
-    public enum ModuleKind { Ear, Tail, Tail2, Legs, Face, Hand, HandLight }
+    public enum ModuleKind { Ear, Tail, Tail2, Tail45, TailCurl, Hat, Legs, Face, Hand, HandLight }
 
     /// <summary>モジュールの名前・アイコン・色・モデルファイル・取り付けられる面。</summary>
     public static class ModuleCatalog
     {
-        public static readonly ModuleKind[] All = { ModuleKind.Ear, ModuleKind.Tail, ModuleKind.Tail2, ModuleKind.Legs, ModuleKind.Face, ModuleKind.Hand, ModuleKind.HandLight };
+        public static readonly ModuleKind[] All = { ModuleKind.Ear, ModuleKind.Tail, ModuleKind.Tail2, ModuleKind.Tail45, ModuleKind.TailCurl, ModuleKind.Hat, ModuleKind.Legs, ModuleKind.Face, ModuleKind.Hand, ModuleKind.HandLight };
 
         public static string Name(ModuleKind k)
         {
@@ -19,6 +19,9 @@ namespace Aidy
                 case ModuleKind.Ear: return "耳";
                 case ModuleKind.Tail: return "尻尾";
                 case ModuleKind.Tail2: return "尻尾2";
+                case ModuleKind.Tail45: return "尻尾45";
+                case ModuleKind.TailCurl: return "巻き尻尾";
+                case ModuleKind.Hat: return "シルクハット";
                 case ModuleKind.Legs: return "足";
                 case ModuleKind.Hand: return "手";
                 case ModuleKind.HandLight: return "ライト手";
@@ -32,7 +35,10 @@ namespace Aidy
             {
                 case ModuleKind.Ear: return IconId.Ear;
                 case ModuleKind.Tail:
-                case ModuleKind.Tail2: return IconId.Tail;
+                case ModuleKind.Tail2:
+                case ModuleKind.Tail45:
+                case ModuleKind.TailCurl: return IconId.Tail;
+                case ModuleKind.Hat: return IconId.Hat;
                 case ModuleKind.Legs: return IconId.Leg;
                 case ModuleKind.Hand: return IconId.Hand;
                 case ModuleKind.HandLight: return IconId.Flashlight;
@@ -47,6 +53,9 @@ namespace Aidy
                 case ModuleKind.Ear: return Theme.Hex(0xf97316);
                 case ModuleKind.Tail: return Theme.Hex(0x8b5cf6);
                 case ModuleKind.Tail2: return Theme.Hex(0x6366f1);
+                case ModuleKind.Tail45: return Theme.Hex(0xa855f7);
+                case ModuleKind.TailCurl: return Theme.Hex(0x0ea5e9);
+                case ModuleKind.Hat: return Theme.Hex(0x334155);
                 case ModuleKind.Legs: return Theme.Hex(0x10b981);
                 case ModuleKind.Hand: return Theme.Hex(0xec4899);
                 case ModuleKind.HandLight: return Theme.Hex(0xeab308);
@@ -62,7 +71,10 @@ namespace Aidy
                 case ModuleKind.Face: return s.IsMonitor;
                 case ModuleKind.Ear: return !s.IsMonitor && (s.Face == "top" || s.Face == "left" || s.Face == "right");
                 case ModuleKind.Tail:
-                case ModuleKind.Tail2: return !s.IsMonitor && (s.Face == "back" || s.Face == "top");
+                case ModuleKind.Tail2:
+                case ModuleKind.Tail45:
+                case ModuleKind.TailCurl: return !s.IsMonitor && (s.Face == "back" || s.Face == "top");
+                case ModuleKind.Hat: return s.Id == "top_2"; // つばが 80mm あるので上面の真ん中だけ
                 case ModuleKind.Legs: return !s.IsMonitor && s.Face == "bottom";
                 case ModuleKind.Hand:
                 case ModuleKind.HandLight: return !s.IsMonitor && (s.Face == "left" || s.Face == "right");
@@ -70,7 +82,7 @@ namespace Aidy
             return false;
         }
 
-        public static bool IsTail(ModuleKind k) => k == ModuleKind.Tail || k == ModuleKind.Tail2;
+        public static bool IsTail(ModuleKind k) => k == ModuleKind.Tail || k == ModuleKind.Tail2 || k == ModuleKind.Tail45 || k == ModuleKind.TailCurl;
 
         /// <summary>
         /// モデルファイル (Resources/AIDY/ 以下、拡張子なし)。AidyModelLoader が *_stl → *_obj → *_3mf の順に探す。
@@ -80,9 +92,12 @@ namespace Aidy
         {
             switch (k)
             {
-                case ModuleKind.Ear: return "AIDY/耳";
+                case ModuleKind.Ear: return "AIDY/mimi2";
                 case ModuleKind.Tail: return "AIDY/tail";
                 case ModuleKind.Tail2: return "AIDY/tail2";
+                case ModuleKind.Tail45: return "AIDY/尻尾_45";
+                case ModuleKind.TailCurl: return "AIDY/尻尾_巻き2";
+                case ModuleKind.Hat: return "AIDY/シルクハット";
                 case ModuleKind.Hand: return "AIDY/手_短い";
                 case ModuleKind.HandLight: return "AIDY/手_短い_懐中電灯";
                 case ModuleKind.Legs: return "AIDY/足v1";
@@ -94,9 +109,12 @@ namespace Aidy
         {
             switch (k)
             {
-                case ModuleKind.Ear: return MountAxis.ZUpFrontMinusY;
+                case ModuleKind.Ear:
+                case ModuleKind.Hat: return MountAxis.ZUpFrontMinusY;
                 case ModuleKind.Tail:
-                case ModuleKind.Tail2: return MountAxis.SlotTabPlusY;
+                case ModuleKind.Tail2:
+                case ModuleKind.Tail45: return MountAxis.SlotTabPlusY;
+                case ModuleKind.TailCurl: return MountAxis.EndPlusX;
                 case ModuleKind.Legs: return MountAxis.TopPadZUp;
                 default: return MountAxis.MagnetPlusX;
             }
@@ -382,7 +400,7 @@ namespace Aidy
     /// <summary>モデルファイルの向き。取り付け面ローカル (+Y=外向き, +Z=正面) へどう変換するか。</summary>
     public enum MountAxis
     {
-        /// <summary>Z 上・-Y 正面・原点 (x,y) が取り付け位置、底面を取り付け面に置く (耳.stl)。</summary>
+        /// <summary>Z 上・-Y 正面・原点 (x,y) が取り付け位置、底面を取り付け面に置く (mimi2.stl)。</summary>
         ZUpFrontMinusY,
         /// <summary>-Y 方向へ突き出す。+Y 側の端 (XZ の中心) を取り付け面に置く。</summary>
         OutwardMinusY,
@@ -392,10 +410,12 @@ namespace Aidy
         /// </summary>
         MagnetPlusX,
         /// <summary>
-        /// Z 上・+Y 外向き。-Y 側の台座の底面にスロットと同じ溝 (28.8x4mm、X が長手、中心が原点の XZ) があり、
-        /// その底面を取り付け面に置いて +Z 側へ反らせる (tail.stl, tail2.stl)。
+        /// Z 上・+Y 外向き。-Y 側の台座の底面 (Y 最小の面) を取り付け面に置き、その中心を取り付け位置にして
+        /// +Z 側へ反らせる (tail.stl, tail2.stl, 尻尾_45.stl)。
         /// </summary>
         SlotTabPlusY,
+        /// <summary>Z 上・-X 外向き。+X 端の面 (X 最大の面) を取り付け面に置き、その中心を取り付け位置にする (尻尾_巻き2.stl)。</summary>
+        EndPlusX,
         /// <summary>
         /// Z 上・-Y 正面。上面の平らな面 (Z 最大) を本体の底面に当て、その中心を取り付け位置にする。
         /// 足v1.3mf は左右 2 つ入りなので、X が小さい方の 1 つだけ使う (1 スロットに 1 つ)。
@@ -662,7 +682,15 @@ namespace Aidy
                     max = Vector3.Max(max, p);
                 }
             }
-            Vector2 pocket = axis == MountAxis.MagnetPlusX ? FindPocket(src, min, max) : axis == MountAxis.TopPadZUp ? TopPad(src, max.z) : Vector2.zero;
+            Vector2 pocket;
+            switch (axis)
+            {
+                case MountAxis.MagnetPlusX: pocket = FindPocket(src, min, max); break;
+                case MountAxis.TopPadZUp: pocket = TopPad(src, max.z); break;
+                case MountAxis.SlotTabPlusY: pocket = FaceCenter(src, 1, min.y); break;
+                case MountAxis.EndPlusX: pocket = FaceCenter(src, 0, max.x); break;
+                default: pocket = Vector2.zero; break;
+            }
             int count = src.Count - src.Count % 3;
             var pos = new Vector3[count];
             for (int i = 0; i < count; i++)
@@ -681,8 +709,12 @@ namespace Aidy
                         break;
                     }
                     case MountAxis.SlotTabPlusY:
-                        // 右手系 (Z上) → Unity。台座の底面を原点 (本体の表面) にする
-                        pos[i] = new Vector3(-p.x, p.y - min.y, p.z);
+                        // 右手系 (Z上) → Unity。台座の底面の中心を原点 (本体の表面) にする
+                        pos[i] = new Vector3(-(p.x - pocket.x), p.y - min.y, p.z - pocket.y);
+                        break;
+                    case MountAxis.EndPlusX:
+                        // +X 端の面の中心を原点に、-X 方向を外向き (+Y) へ
+                        pos[i] = new Vector3(-(p.y - pocket.x), max.x - p.x, p.z - pocket.y);
                         break;
                     case MountAxis.TopPadZUp:
                         // 底面の取り付け面ローカル (+Y=下, +Z=正面, +X=正面から見て右) へ。上面の中心を原点にする
@@ -766,6 +798,20 @@ namespace Aidy
                 hi = Vector2.Max(hi, p);
             }
             return (lo + hi) * 0.5f;
+        }
+
+        /// <summary>axis (0=X, 1=Y) の座標が plane の面の中心。残りの 2 軸を (小さい軸, 大きい軸) の順で返す。</summary>
+        static Vector2 FaceCenter(List<Vector3> src, int axis, float plane)
+        {
+            Vector2 lo = new Vector2(float.MaxValue, float.MaxValue), hi = -lo;
+            foreach (Vector3 p in src)
+            {
+                if (Mathf.Abs(p[axis] - plane) > 0.3f) continue;
+                var q = axis == 0 ? new Vector2(p.y, p.z) : new Vector2(p.x, p.z);
+                lo = Vector2.Min(lo, q);
+                hi = Vector2.Max(hi, q);
+            }
+            return lo.x <= hi.x ? (lo + hi) * 0.5f : Vector2.zero;
         }
 
         /// <summary>

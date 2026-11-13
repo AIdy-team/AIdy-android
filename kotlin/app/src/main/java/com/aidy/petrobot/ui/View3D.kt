@@ -23,7 +23,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
@@ -118,7 +118,8 @@ fun Modifier.roomTouch(room: HomeRoom, placement: ViewPlacement, tray: ModuleDra
                 }
                 if (pinching) continue
                 val c = pressed[0]
-                val delta = c.positionChange()
+                // 上で consume 済みなので positionChange() は常に 0 になる。消費を無視して移動量を読む
+                val delta = c.positionChangeIgnoreConsumed()
                 lastPos = c.position
 
                 // プレビュー: 選んだ面の取り付け済みモジュールをつかんだら、モジュールのドラッグ (移動/取り外し) にする

@@ -60,6 +60,15 @@ class ModuleShape(val pivots: List<Pose>, val parts: List<Part>) {
                         parts += Part(cyl, 0, Pose(uPos(0f, 15f, 25f) * mm, uRot(90f, V3.Right), V3(mm, mm, mm)), Mat.Satin)
                     }
                 }
+                ModuleKind.Hat -> {
+                    // シルクハット: 平らな底を上面に置くだけ (動かない)
+                    val hat = ModelLoader.load(kind)
+                    if (hat != null) parts += Part(hat, -1, Pose(s = V3(mm, mm, mm)), Mat.Satin)
+                    else {
+                        val cyl = cached("hat") { Meshes.cylinder(25f, 25f, 35f, 24) }
+                        parts += Part(cyl, -1, Pose(V3(0f, 17.5f * mm, 0f), s = V3(mm, mm, mm)), Mat.Satin)
+                    }
+                }
                 ModuleKind.Ear -> {
                     val ear = ModelLoader.load(kind)
                     if (ear != null) parts += Part(ear, -1, Pose(s = V3(mm, mm, mm)), Mat.Satin)
@@ -68,8 +77,8 @@ class ModuleShape(val pivots: List<Pose>, val parts: List<Part>) {
                         parts += Part(cyl, -1, Pose(V3(0f, 0.15f * k, 0f), s = V3(k, k, k)), Mat.Satin)
                     }
                 }
-                ModuleKind.Tail, ModuleKind.Tail2 -> {
-                    // 根元で左右に振る (wag)。差し込み部をスロットに入れ、+Z (背面なら上) へ反る
+                ModuleKind.Tail, ModuleKind.Tail2, ModuleKind.Tail45, ModuleKind.TailCurl -> {
+                    // 根元で左右に振る (wag)。台座をスロットに当て、+Z (背面なら上) へ反る
                     pivots += Pose()
                     val tail = ModelLoader.load(kind)
                     if (tail != null) {
