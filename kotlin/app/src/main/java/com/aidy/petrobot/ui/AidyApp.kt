@@ -150,7 +150,7 @@ fun AidyApp(app: AppState) {
                             }
                         } ?: ModelLoadingView()
                         PageDiary -> DiaryPage(app.diary, diaryVisible && pager.settledPage == PageDiary)
-                        PageRemote -> RemotePage()
+                        PageRemote -> RemotePage(pager.settledPage == PageRemote)
                         PageAR -> arUi?.let { ARPage(it, arVisible) { app.markerSheet.open() } } ?: ModelLoadingView()
                         PageSettings -> SettingsPage(app.diary) { goTo(PageDiary) }
                     }

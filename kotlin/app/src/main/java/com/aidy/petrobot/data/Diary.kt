@@ -188,7 +188,7 @@ object DiaryComposer {
 /**
  * Wi-Fi 経由で Aidy 本体 (http://{host}) と話す。口の形は AIdy_アプリ連携_仕様.md のとおり。
  * すべての通信に合言葉 (ヘッダー X-Aidy-Token) が必要。401・403 はどちらも「合言葉が違います」として扱う。
- * まだ本体にない口 (設定・ようす・予定の書き込み・話しかけ) は
+ * まだ本体にない口 (ようす・予定の書き込み・話しかけ) は
  * 設定画面の「今後の開発予定」に載せるだけで、ここには実装しない。
  */
 object AidyDeviceLink {
@@ -472,6 +472,96 @@ object AidyDeviceLink {
             Log.w("AIDY", "辞書の更新に失敗: ${e.message}")
             DictResult(false, null, "本体からの返事を読み取れませんでした")
         }
+    }
+
+    // ------------------------------------------------------------ 音量・話す速さ (/api/settings)
+
+    /**
+     * 本体の声の設定。volume = 音量 0〜100 (%)、speed = 話す速さ (1.0 がふつう、0.5〜1.5)。
+     * 本体側の仕様が決まるまでの仮の形 (README の「本体との通信」参照)。
+     */
+    data class VoiceSettings(val volume: Int, val speed: Float)
+
+    /** unsupported = 本体がまだ /api/settings を持っていない (404)。 */
+    data class SettingsResult(val ok: Boolean, val settings: VoiceSettings?, val error: String?, val unsupported: Boolean = false)
+
+    /** 本体の返事から設定を読む。{"settings": {...}} でも {...} 直下でも、speed の代わりに rate でも読める。 */
+    private fun parseSettings(o: JSONObject): VoiceSettings? {
+        val s = o.optJSONObject("settings") ?: o
+        if (!s.has("volume") && !s.has("speed") && !s.has("rate")) return null
+        val volume = s.optInt("volume", VoiceStore.volume).coerceIn(0, 100)
+        val speed = (if (s.has("speed")) s.optDouble("speed") else s.optDouble("rate", VoiceStore.speed.toDouble())).toFloat()
+        return VoiceSettings(volume, speed.coerceIn(VoiceStore.MinSpeed, VoiceStore.MaxSpeed))
+    }
+
+    private fun settingsError(code: Int?): SettingsResult =
+        if (code == 404) SettingsResult(false, null, "本体がまだ音量・速さの設定に対応していません", unsupported = true)
+        else SettingsResult(false, null, errorMessage(code))
+
+    /** GET /api/settings。読めたら端末にも覚えておく。 */
+    suspend fun fetchSettings(): SettingsResult = withContext(Dispatchers.IO) {
+        if (host.isEmpty() || token.isEmpty()) return@withContext SettingsResult(false, null, "本体と接続していません")
+        try {
+            val conn = open("/api/settings")
+            try {
+                val code = conn.responseCode
+                if (code != 200) return@withContext settingsError(code)
+                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val v = parseSettings(JSONObject(body)) ?: return@withContext SettingsResult(false, null, "本体からの返事を読み取れませんでした")
+                VoiceStore.remember(v)
+                SettingsResult(true, v, null)
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: IOException) {
+            SettingsResult(false, null, errorMessage(null))
+        } catch (e: Exception) {
+            Log.w("AIDY", "settings の解析に失敗: ${e.message}")
+            SettingsResult(false, null, "本体からの返事を読み取れませんでした")
+        }
+    }
+
+    /** POST /api/settings {"volume": 60, "speed": 1.0}。返事に設定があればそれを、なければ送った値を覚える。 */
+    suspend fun saveSettings(v: VoiceSettings): SettingsResult = withContext(Dispatchers.IO) {
+        VoiceStore.remember(v)
+        if (host.isEmpty() || token.isEmpty()) return@withContext SettingsResult(false, null, "本体と接続していません (この端末に保存しました)")
+        try {
+            val body = JSONObject().put("volume", v.volume).put("speed", Math.round(v.speed * 100) / 100.0)
+            val conn = openPost("/api/settings", body)
+            try {
+                val code = conn.responseCode
+                if (code != 200) return@withContext settingsError(code)
+                val text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val res = runCatching { JSONObject(text) }.getOrNull()
+                if (res != null && res.has("ok") && !res.optBoolean("ok")) return@withContext SettingsResult(false, null, res.optString("error", "できませんでした"))
+                val now = res?.let { parseSettings(it) } ?: v
+                VoiceStore.remember(now)
+                SettingsResult(true, now, null)
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: IOException) {
+            SettingsResult(false, null, errorMessage(null))
+        } catch (e: Exception) {
+            Log.w("AIDY", "settings の送信に失敗: ${e.message}")
+            SettingsResult(false, null, "本体からの返事を読み取れませんでした")
+        }
+    }
+}
+
+/** 最後に知っている声の設定 (本体とつながっていなくてもスライダーに出す用)。 */
+object VoiceStore {
+    const val MinSpeed = 0.5f
+    const val MaxSpeed = 1.5f
+    private const val VolumeKey = "aidy.voice.volume"
+    private const val SpeedKey = "aidy.voice.speed100"
+
+    val volume: Int get() = Prefs.getInt(VolumeKey, 60)
+    val speed: Float get() = Prefs.getInt(SpeedKey, 100) / 100f
+
+    fun remember(v: AidyDeviceLink.VoiceSettings) {
+        Prefs.putInt(VolumeKey, v.volume)
+        Prefs.putInt(SpeedKey, Math.round(v.speed * 100f))
     }
 }
 

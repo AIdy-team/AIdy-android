@@ -152,9 +152,18 @@ fun HomePage(ui: HomeUi, active: Boolean, onEdit: () -> Unit) {
 // ---------------------------------------------------------------- PAGE 2: リモコン・モジュール
 
 @Composable
-fun RemotePage() {
+fun RemotePage(visible: Boolean) {
+    var showDictManager by remember { mutableStateOf(false) }
+    if (showDictManager) DictManagerDialog(onDismiss = { showDictManager = false })
+
     ScrollPage(Modifier.background(Theme.Device)) {
-        SectionTitle("標準モジュール (モデル合体済み)", true)
+        SectionTitle("Aidy本体", true)
+        VoiceSettingsCard(visible)
+        Card(IconId.Book, Theme.hex(0x8b5cf6), Theme.hex(0xf3e8ff), "辞書 (よくある質問・聞き間違い・読み)", "本体の返事をカスタマイズする", onClick = { showDictManager = true }) {
+            Icon(IconId.ChevronRight, 12.dp, Theme.Slate400)
+        }
+
+        SectionTitle("標準モジュール (モデル合体済み)", false)
         Card(IconId.Snowflake, Theme.Primary, Theme.Slate100, "リビングエアコン", "温度: 24°C / 自動") { AidySwitch(true) }
         Card(IconId.Lightbulb, Theme.Primary, Theme.Slate100, "メイン照明", "オン / 100% 輝度") { AidySwitch(true) }
         Card(IconId.Plug, Theme.Primary, Theme.Slate100, "スマートプラグ", "オフ / タイマー設定") { AidySwitch(false) }
@@ -169,13 +178,9 @@ fun RemotePage() {
 
 @Composable
 fun SettingsPage(diary: DiaryState, onOpenDiary: () -> Unit) {
-    var showDictManager by remember { mutableStateOf(false) }
-    if (showDictManager) DictManagerDialog(onDismiss = { showDictManager = false })
-
     ScrollPage(Modifier.background(Theme.Device)) {
         SectionTitle("ロボット設定", true)
         Card(null, Color.Unspecified, Color.Unspecified, "アセンブリ構造", "本体v2_モデル.obj (透明化防止完全対応)") { Icon(IconId.Check, 14.dp, Theme.Green) }
-        Card(null, Color.Unspecified, Color.Unspecified, "スピーカー音量", "効果音 & 音声応答") { Label("60%", 13f, Theme.Primary, true) }
 
         SectionTitle("日記", false)
         Card(null, Color.Unspecified, Color.Unspecified, "カレンダー表示", "週表示に切り替える") {
@@ -195,9 +200,7 @@ fun SettingsPage(diary: DiaryState, onOpenDiary: () -> Unit) {
             Icon(IconId.ChevronRight, 12.dp, Theme.Slate400)
         }
         DeviceLinkCard()
-        Card(IconId.Book, Theme.hex(0x8b5cf6), Theme.hex(0xf3e8ff), "辞書 (よくある質問・聞き間違い・読み)", "本体の返事をカスタマイズする", onClick = { showDictManager = true }) {
-            Icon(IconId.ChevronRight, 12.dp, Theme.Slate400)
-        }
+        Label("音量・話す速さ・辞書はリモコンのページにあります", 11f, Theme.TextSub, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
 
         SectionTitle("今後の開発予定", false)
         FutureFeatureList()
@@ -275,7 +278,6 @@ private fun FutureFeatureList() {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Label("下は本体側にまだ口が無いので、このアプリからは作れません。本体が対応したら実装してください。", 11f, Theme.TextSub)
-        FutureRow("音量・話す速さ", "GET/POST /api/settings (本体側が指示書の段階1で対応予定)")
         FutureRow("本体の今のようす (表情・人・曲・タイマー)", "GET /api/status (本体側が指示書の段階2で対応予定)")
         FutureRow("予定をまとめて見る・やることを足す", "GET /api/schedule ・ POST /api/todo (本体側が指示書の段階3で対応予定)")
         FutureRow("文字で話させる・話しかける", "POST /api/say ・ POST /api/talk (本体側が指示書の段階4で対応予定)")
