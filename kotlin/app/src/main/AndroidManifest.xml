@@ -6,6 +6,19 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 本体へは Wi-Fi 経由で送る (ネットにつながらない Wi-Fi でもモバイルデータに逃がさない) ため Wi-Fi の Network を探す -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- 本体と Bluetooth Low Energy で話す (docs/本体Bluetooth対応_仕様.txt) -->
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <!-- Android 12 以上: 近くのデバイスを探す・つなぐ (位置情報には使わない) -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Android 11 以下: 旧来の Bluetooth 権限 + BLE スキャンに位置情報が要る -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />

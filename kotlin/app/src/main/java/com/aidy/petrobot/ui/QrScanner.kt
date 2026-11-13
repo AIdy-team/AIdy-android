@@ -47,11 +47,11 @@ import java.util.concurrent.Executors
 
 /**
  * 本体の QR ("http://host:port/?t=token"、仕様書 AIdy_アプリ連携_仕様.md 参照) をカメラで読み取る
- * フルスクリーンのダイアログ。読み取れたら onResult(host, token) を呼んで自動で閉じる。
+ * フルスクリーンのダイアログ。読み取れたら onResult(住所・合言葉・Bluetooth名) を呼んで自動で閉じる。
  * 端末内の ML Kit だけで処理する (通信なし)。
  */
 @Composable
-fun QrScannerDialog(onResult: (String, String) -> Unit, onDismiss: () -> Unit) {
+fun QrScannerDialog(onResult: (AidyDeviceLink.QrInfo) -> Unit, onDismiss: () -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         val context = LocalContext.current
         val lifecycleOwner = LocalLifecycleOwner.current
@@ -105,7 +105,7 @@ fun QrScannerDialog(onResult: (String, String) -> Unit, onDismiss: () -> Unit) {
                                         val parsed = AidyDeviceLink.parseQr(raw)
                                         if (parsed != null) {
                                             handled = true
-                                            onResult(parsed.first, parsed.second)
+                                            onResult(parsed)
                                         } else {
                                             message = "この QR コードは Aidy 本体のものじゃないみたい"
                                         }

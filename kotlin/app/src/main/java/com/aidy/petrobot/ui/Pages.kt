@@ -27,7 +27,10 @@ import androidx.compose.ui.unit.dp
 import com.aidy.petrobot.ar.ARCameraView
 import com.aidy.petrobot.ar.ARController
 import com.aidy.petrobot.ar.Placement
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.aidy.petrobot.data.AidyDeviceLink
+import com.aidy.petrobot.data.BleLink
 import com.aidy.petrobot.data.BodyColor
 import com.aidy.petrobot.data.CalendarSettings
 import com.aidy.petrobot.data.ModuleCatalog
@@ -175,8 +178,8 @@ fun RemotePage(visible: Boolean) {
 fun SettingsPage(diary: DiaryState, onOpenDiary: () -> Unit) {
     ScrollPage(Modifier.background(Theme.Device)) {
         SectionTitle("Aidy本体と接続", true)
-        val hostLabel = if (AidyDeviceLink.host.isEmpty()) "未設定（下で住所と合言葉を入れてね）" else AidyDeviceLink.host
-        Card(IconId.Aidy, Theme.Primary, Theme.PrimaryLight, "Aidy本体の会話ログ", "$hostLabel から Wi-Fi で日記を同期", onClick = onOpenDiary) {
+        val linkLabel = if (!AidyDeviceLink.isConfigured) "未設定（下で合言葉を入れてね）" else AidyDeviceLink.targetLabel + " から日記を同期"
+        Card(IconId.Aidy, Theme.Primary, Theme.PrimaryLight, "Aidy本体の会話ログ", linkLabel, onClick = onOpenDiary) {
             Icon(IconId.ChevronRight, 12.dp, Theme.Slate400)
         }
         DeviceLinkCard()
@@ -199,30 +202,28 @@ fun SettingsPage(diary: DiaryState, onOpenDiary: () -> Unit) {
     }
 }
 
-// ---------------------------------------------------------------- 設定: Aidy本体と接続 (住所・合言葉)
+// ---------------------------------------------------------------- 設定: Aidy本体と接続 (Bluetooth / Wi-Fi・合言葉)
 
-/** 住所 (IP:ポート) と合言葉を、カメラでの QR 読み取りか手入力で設定し、/api/ping で接続を確かめるカード。 */
+/**
+ * 通り道 (Bluetooth / Wi-Fi) と、本体の名前 or 住所・合言葉を、QR 読み取りか手入力で設定し、
+ * /api/ping で接続を確かめるカード。Bluetooth のときは先に実行時の許可を求める。
+ */
 @Composable
 private fun DeviceLinkCard() {
     val scope = rememberCoroutineScope()
+    var mode by remember { mutableStateOf(AidyDeviceLink.mode) }
     var host by remember { mutableStateOf(AidyDeviceLink.host) }
+    var bleName by remember { mutableStateOf(AidyDeviceLink.bleName) }
     var token by remember { mutableStateOf(AidyDeviceLink.token) }
     var checking by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf(if (AidyDeviceLink.isConfigured) "保存済み。「保存して接続を試す」で確かめてね" else "まだ設定されていません") }
     var statusColor by remember { mutableStateOf(Theme.TextSub) }
     var showScanner by remember { mutableStateOf(false) }
 
-    fun testConnect() {
-        if (checking) return
-        // QR の中身 (http://…/?t=…) をそのままアドレス欄に貼った場合は、住所と合言葉に分ける
-        AidyDeviceLink.parseQr(host)?.let { (h, t) -> host = h; if (token.isBlank()) token = t }
-        AidyDeviceLink.host = host
-        AidyDeviceLink.token = token
-        host = AidyDeviceLink.host
-        token = AidyDeviceLink.token
+    fun runPing() {
         checking = true
         statusColor = Theme.Slate600
-        status = "接続を確認中…"
+        status = if (mode == AidyDeviceLink.Mode.Bluetooth) "Bluetooth で本体を探しています…" else "接続を確認中…"
         scope.launch {
             val r = AidyDeviceLink.ping()
             checking = false
@@ -231,11 +232,44 @@ private fun DeviceLinkCard() {
         }
     }
 
+    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
+        if (res.values.all { it }) runPing()
+        else {
+            checking = false
+            statusColor = Theme.hex(0xef4444)
+            status = "Bluetooth の許可がないと本体とつなげません (スマホの設定 > アプリ > 権限 でも変えられます)"
+        }
+    }
+
+    fun testConnect() {
+        if (checking) return
+        // QR の中身 (http://…/?t=…) をそのままアドレス欄に貼った場合は、住所と合言葉に分ける
+        AidyDeviceLink.parseQr(host)?.let { q ->
+            host = q.host
+            if (token.isBlank()) token = q.token
+            if (bleName.isBlank()) bleName = q.ble
+        }
+        AidyDeviceLink.mode = mode
+        AidyDeviceLink.host = host
+        AidyDeviceLink.bleName = bleName
+        AidyDeviceLink.token = token
+        host = AidyDeviceLink.host
+        bleName = AidyDeviceLink.bleName
+        token = AidyDeviceLink.token
+        if (mode == AidyDeviceLink.Mode.Bluetooth && !BleLink.hasPermissions()) {
+            checking = true
+            permLauncher.launch(BleLink.requiredPermissions())
+        } else {
+            runPing()
+        }
+    }
+
     if (showScanner) {
         QrScannerDialog(
-            onResult = { h, t ->
-                host = h
-                token = t
+            onResult = { q ->
+                if (q.host.isNotEmpty()) host = q.host
+                if (q.ble.isNotEmpty()) bleName = q.ble
+                token = q.token
                 showScanner = false
                 testConnect()
             },
@@ -247,8 +281,19 @@ private fun DeviceLinkCard() {
         Modifier.fillMaxWidth().box(Color.White, 16.dp, 1.dp, Theme.Slate100).padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Label("本体のアドレス (IP:ポート)", 11f, Theme.TextSub, true)
-        Input(host, { host = it.take(64) }, "例: 192.168.1.23:8090", false)
+        Label("つなぎ方", 11f, Theme.TextSub, true)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val ble = mode == AidyDeviceLink.Mode.Bluetooth
+            SmallButton("Bluetooth", if (ble) Theme.Primary else Theme.Slate100, if (ble) Color.White else Theme.Slate600) { mode = AidyDeviceLink.Mode.Bluetooth }
+            SmallButton("Wi-Fi", if (!ble) Theme.Primary else Theme.Slate100, if (!ble) Color.White else Theme.Slate600) { mode = AidyDeviceLink.Mode.Wifi }
+        }
+        if (mode == AidyDeviceLink.Mode.Bluetooth) {
+            Label("本体の Bluetooth 名 (空なら近くの Aidy を探す)", 11f, Theme.TextSub, true)
+            Input(bleName, { bleName = it.take(32) }, "例: AIdy-1A2B", false)
+        } else {
+            Label("本体のアドレス (IP:ポート)", 11f, Theme.TextSub, true)
+            Input(host, { host = it.take(64) }, "例: 192.168.1.23:8090", false)
+        }
         Label("合言葉 (本体の QR の t= の後ろ)", 11f, Theme.TextSub, true)
         Input(token, { token = it.take(64) }, "QRコードの合言葉", false, password = true)
         Label(status, 12f, statusColor, true)
@@ -260,6 +305,7 @@ private fun DeviceLinkCard() {
     }
     Spacer(Modifier.height(10.dp))
 }
+
 
 // ---------------------------------------------------------------- 設定: 今後の開発予定 (仕様書にあるが本体・アプリにまだない口)
 
