@@ -28,6 +28,7 @@ import com.aidy.petrobot.ar.ARCameraView
 import com.aidy.petrobot.ar.ARController
 import com.aidy.petrobot.ar.Placement
 import com.aidy.petrobot.data.AidyDeviceLink
+import com.aidy.petrobot.data.BodyColor
 import com.aidy.petrobot.data.CalendarSettings
 import com.aidy.petrobot.data.ModuleCatalog
 import com.aidy.petrobot.data.ModuleConfig
@@ -65,15 +66,50 @@ class HomeUi(val room: HomeRoom) {
 /** 1 画面で完結 (スクロールなし): 3D はページいっぱい、構成のまとめはその上に浮かべる。 */
 @Composable
 fun HomePage(ui: HomeUi, active: Boolean, onEdit: () -> Unit) {
+    var showColor by remember { mutableStateOf(false) }
+    if (showColor) {
+        ColorPatternDialog(
+            "Aidyの色",
+            BodyColor.pattern,
+            ui.room.rig.attached,
+            onPreview = { ui.room.rig.applyPattern(it) },
+            onConfirm = {
+                BodyColor.pattern = it
+                ui.room.rig.applyPattern(it)
+                showColor = false
+                ui.toast.show(AidyFace.Happy, "新しい色になったよ！", 2.2f)
+            },
+            onDismiss = {
+                ui.room.rig.applyPattern(BodyColor.pattern) // 選んでいた色を戻す
+                showColor = false
+            },
+        )
+    }
     Box(Modifier.fillMaxSize().background(Theme.Device)) {
         View3D(
             ui.room, active, ui.stateText, ui.mascot, "タップでなでなで ・ ドラッグで回転 ・ ピンチでズーム",
             Modifier.fillMaxSize(),
             bottomInset = (SummaryHeight + SummaryMargin * 2f).dp,
-            battery = true,
             toast = ui.toast,
             toastTop = 52.dp,
         )
+        // 右上: 本体の色を変える
+        @Suppress("UNUSED_VARIABLE") val colorVersion = BodyColor.version
+        Row(
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 12.dp, end = 12.dp)
+                .height(34.dp)
+                .pressable(0.95f) { showColor = true }
+                .box(Color.White.copy(alpha = 0.94f), 17.dp, 4.dp, Theme.Border)
+                .padding(start = 6.dp, end = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            PatternDot(BodyColor.pattern, 24.dp)
+            Label("色", 12f, Theme.TextMain, true)
+        }
+
         // いまのモジュール + お散歩 + 付け替えへ
         val summary = run {
             @Suppress("UNUSED_VARIABLE") val v = ModuleConfig.version
@@ -289,22 +325,18 @@ class ARPageUi(val editRoom: HomeRoom, val ar: ARController) {
 
     /** true: カメラで AR / false: 画面上の 3D で付け替えプレビュー。 */
     fun setARMode(on: Boolean) {
-        if (on && !arMode) ar.changePlacement(Placement.Choose) // AR を開くたびに表示方法を選び直す
+        if (on && !arMode) ar.changePlacement(Placement.Marker) // AR はマーカーで表示する (マーカーなしの配置はなくした)
         arMode = on
         if (on && pageShown) ar.startCamera()
         if (!on) ar.stopCamera()
     }
 
-    fun choosePlacement(p: Placement) {
-        ar.startCamera()
-        ar.changePlacement(p)
-    }
 }
 
 @Composable
 fun ARPage(ui: ARPageUi, active: Boolean, onMarkerButton: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Theme.Device)) {
-        if (ui.arMode) ARCameraMode(ui)
+        if (ui.arMode) ARCameraMode(ui, onMarkerButton)
         else {
             // ---- 画面上: 3D プレビューで面をタップ → モジュールをドラッグ&ドロップで付け替え
             View3D(
@@ -361,7 +393,7 @@ private fun Segment(icon: IconId, text: String, selected: Boolean, modifier: Mod
 
 /** AR (カメラ): 本体を床や机に置いて見る。 */
 @Composable
-private fun ARCameraMode(ui: ARPageUi) {
+private fun ARCameraMode(ui: ARPageUi, onMarkerButton: () -> Unit) {
     val ar = ui.ar
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         ARCameraView(ar, Modifier.fillMaxSize())
@@ -391,8 +423,7 @@ private fun ARCameraMode(ui: ARPageUi) {
                 .height(48.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            ARButton(IconId.Sliders, "表示方法", true, Modifier.weight(1f)) { ar.changePlacement(Placement.Choose) }
-            ARButton(IconId.Crosshairs, "中央に再配置", false, Modifier.weight(1f)) { ar.resetPosition() }
+            ARButton(IconId.Crosshairs, "マーカー・色", true, Modifier.weight(1f), onMarkerButton)
             ARButton(IconId.Camera, "カメラ切替", false, Modifier.weight(1f)) {
                 val cam = ar.switchCamera()
                 if (cam == null) ui.arToast.show(AidyFace.Sleepy, "切り替えられるカメラがないよ", 2.2f)
@@ -400,7 +431,6 @@ private fun ARCameraMode(ui: ARPageUi) {
             }
         }
 
-        if (ar.placement == Placement.Choose) PlacementChooser(ui)
     }
 }
 
@@ -420,45 +450,3 @@ private fun ARButton(icon: IconId, text: String, primary: Boolean, modifier: Mod
     }
 }
 
-/** AR を始めたとき: マーカーで出すか、マーカーなしで机や床に置くかを選ぶカード。 */
-@Composable
-private fun PlacementChooser(ui: ARPageUi) {
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)).consumeTaps()) {
-        Column(
-            Modifier
-                .align(Alignment.Center)
-                .padding(horizontal = 24.dp)
-                .fillMaxWidth()
-                .box(Color.White, 22.dp, 12.dp)
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Label("Aidyをどうやって表示する？", 15f, Theme.TextMain, true, Modifier.fillMaxWidth().height(24.dp), align = TextAlign.Center)
-            PlacementOption(IconId.Crosshairs, "マーカーで表示", "マーカーを写すと、その上にAidyが出てくるよ") { ui.choosePlacement(Placement.Marker) }
-            PlacementOption(IconId.HandPointer, "マーカーなしで置く", "机や床をタップすると、そこにAidyを置くよ") { ui.choosePlacement(Placement.Free) }
-        }
-    }
-}
-
-@Composable
-private fun PlacementOption(icon: IconId, title: String, sub: String, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(64.dp)
-            .pressable(0.98f, onClick = onClick)
-            .background(Theme.Slate100, RoundedCornerShape(16.dp))
-            .padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Box(Modifier.size(40.dp).background(Theme.PrimaryLight, RoundedCornerShape(20.dp)), contentAlignment = Alignment.Center) {
-            Icon(icon, 16.dp, Theme.Primary)
-        }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Label(title, 14f, Theme.TextMain, true)
-            Label(sub, 11f, Theme.TextSub)
-        }
-        Icon(IconId.ChevronRight, 12.dp, Theme.Slate400)
-    }
-}

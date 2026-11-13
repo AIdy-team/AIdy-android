@@ -18,6 +18,7 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.exp
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -54,6 +55,7 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
         const val Step = 1f / 60f        // WebDemo は requestAnimationFrame (60fps) 基準の定数で動く
         const val DizzyTurns = 1.5f      // この回転量 (回) を短時間に超えると目を回す
         const val DozeAfter = 30f        // 何も触られないと居眠りする (秒)
+        const val HoldPoseAfter = 6f     // 付け替え画面: 触ってからこの秒数は、回した向きのまま止めておく (底面などを選べるように)
         const val ZoomMin = 0.45f
         const val ZoomMax = 1.8f
     }
@@ -93,6 +95,8 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
 
     private var aiState = AIState.Wander
     private var aiTimer = 0f
+    /** 床をタップされて真ん中へ戻っている途中。 */
+    private var recalling = false
     private var targetPos = V3.Zero
     private var animTime = 0f
     private var accumulator = 0f
@@ -144,12 +148,17 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
         }
 
         // 床・ラグ・壁
-        val floor = gfx.mesh(root, Meshes.plane(8f, 8f), gfx.lit(0xffe2e8f0.toInt(), 0f, 0.4f), false, true, name = "Floor")
-        floor.setLocal(V3(0f, -0.65f, 0f), Q.euler(-PI / 2f, 0f, 0f))
-        val rug = gfx.mesh(root, Meshes.circle(1.6f, 32), gfx.lit(if (editable) 0xffe0e7ff.toInt() else 0xffdbeafe.toInt(), 0f, 0.8f), false, true, name = "Rug")
-        rug.setLocal(V3(0f, -0.64f, 0f), Q.euler(-PI / 2f, 0f, 0f))
-        val wall = gfx.mesh(root, Meshes.plane(8f, 4f), gfx.lit(0xfff8fafc.toInt(), 0f, 0.9f), false, true, name = "Wall")
-        wall.setLocal(V3(0f, 1.35f, -2.5f))
+        if (editable) {
+            val floor = gfx.mesh(root, Meshes.plane(8f, 8f), gfx.lit(0xffe2e8f0.toInt(), 0f, 0.4f), false, true, name = "Floor")
+            floor.setLocal(V3(0f, -0.65f, 0f), Q.euler(-PI / 2f, 0f, 0f))
+            val rug = gfx.mesh(root, Meshes.circle(1.6f, 32), gfx.lit(0xffe0e7ff.toInt(), 0f, 0.8f), false, true, name = "Rug")
+            rug.setLocal(V3(0f, -0.64f, 0f), Q.euler(-PI / 2f, 0f, 0f))
+            val wall = gfx.mesh(root, Meshes.plane(8f, 4f), gfx.lit(0xfff8fafc.toInt(), 0f, 0.9f), false, true, name = "Wall")
+            wall.setLocal(V3(0f, 1.35f, -2.5f))
+        } else {
+            // ホーム: 家具のある部屋
+            RoomDecor(gfx, root)
+        }
 
         // ロボットモデルアセンブリ
         robot = TNode(gfx.empty(root, "RobotGroup")).also { it.p = V3(0f, RobotBaseY, 0f); it.apply() }
@@ -212,6 +221,7 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
         val face = pickFace(x, y)
         if (!editable) {
             if (face != null) petRobotDirectly()
+            else if (moduleAtScreen(x, y, 0f) == null) recall()
             return
         }
         if (face == null) {
@@ -258,7 +268,9 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
             val n = when (axis) { 0 -> V3(side, 0f, 0f); 1 -> V3(0f, side, 0f); else -> V3(0f, 0f, side) }
             for (f in BodyLayout.Faces) if ((BodyLayout.faceNormal(f) dot n) > 0.9f) return f
         }
-        val slot = slotAtScreen(x, y, 70f, { ModuleConfig.at(it.id) != null }, onlyFacing = false, onlySelected = false)
+        // 箱から外れた所: 尻尾・耳の先など、モジュールの見た目に重なっていればその面
+        val slot = moduleAtScreen(x, y, 8f)
+            ?: slotAtScreen(x, y, 70f, { ModuleConfig.at(it.id) != null }, onlyFacing = false, onlySelected = false)
         return slot?.let { BodyLayout.get(it)?.face }
     }
 
@@ -287,6 +299,50 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
         }
         return hit
     }
+
+    /**
+     * 画面上で指が重なっている取り付け済みモジュール (見た目の外形を画面に写した四角 + marginDp の余白)。
+     * 面を選んでいなくても、どの面のモジュールでもつかめる。重なっているときは手前のものを選ぶ。
+     */
+    fun moduleAtScreen(x: Float, y: Float, marginDp: Float = 18f): String? {
+        val margin = marginDp * density
+        val bw = bodyWorld()
+        var hit: String? = null
+        var bestScore = Float.MAX_VALUE
+        for (fr in rig.frameList) {
+            val hull = rig.hullOf(fr.slot.id)
+            if (hull.isEmpty()) continue
+            val sw = bw * Pose(fr.slot.position * BodySize, fr.slot.mountRotation)
+            var x0 = Float.MAX_VALUE; var y0 = Float.MAX_VALUE; var x1 = -Float.MAX_VALUE; var y1 = -Float.MAX_VALUE
+            var zSum = 0f
+            var n = 0
+            for (v in hull) {
+                val sp = camera.worldToScreen(sw.point(v))
+                if (sp.z <= 0f) continue
+                x0 = min(x0, sp.x); y0 = min(y0, sp.y); x1 = max(x1, sp.x); y1 = max(y1, sp.y)
+                zSum += sp.z
+                n++
+            }
+            if (n == 0) continue
+            // 小さいモジュールは指で押さえにくいので、最低でも 44dp 角の当たりにする
+            val minHalf = 22f * density
+            val cx = (x0 + x1) * 0.5f
+            val cy = (y0 + y1) * 0.5f
+            val hx = max((x1 - x0) * 0.5f, minHalf) + margin
+            val hy = max((y1 - y0) * 0.5f, minHalf) + margin
+            if (abs(x - cx) > hx || abs(y - cy) > hy) continue
+            // 手前 (奥行きが小さい) を優先。同じくらいなら中心に近いほう
+            val score = zSum / n + 0.002f * hypot(x - cx, y - cy) / density
+            if (score < bestScore) {
+                bestScore = score
+                hit = fr.slot.id
+            }
+        }
+        return hit
+    }
+
+    /** 画面のその位置に Aidy (本体の箱かモジュール) があるか。 */
+    fun isOverRobot(x: Float, y: Float): Boolean = pickFace(x, y) != null || moduleAtScreen(x, y, 0f) != null
 
     /** ドラッグ中のモジュール (null で終了) と、いま指が重なっているスロット。目印の色を変える。 */
     fun setDropState(kind: ModuleKind?, hoverSlot: String?) = rig.setDrop(kind, hoverSlot)
@@ -610,7 +666,9 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
             robot.p = V3.lerp(robot.p, V3(0f, robot.p.y, 0f), 0.08f)
             rig.swingLegs(0f, 0f)
             if (focusTimer <= 0f) aiTimer = 0.5f
-        } else if (aiEnabled && !draggingModel) {
+        } else if (recalling && !draggingModel) {
+            tickRecall()
+        } else if (aiEnabled && !draggingModel && !holdingPose()) {
             tickAI(dt)
         } else if (!draggingModel) {
             // お散歩なし: その場で呼吸するように上下
@@ -619,7 +677,7 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
         }
 
         // ドラッグで傾いたまま/面を見せた後は、ゆっくり水平に戻る
-        if (!draggingModel && focusTimer <= 0f && reaction != Reaction.Dizzy && reaction != Reaction.Sneeze && reaction != Reaction.Tickle) {
+        if (!draggingModel && !holdingPose() && focusTimer <= 0f && reaction != Reaction.Dizzy && reaction != Reaction.Sneeze && reaction != Reaction.Tickle) {
             robot.r = robot.r.copy(x = lerp(robot.r.x, 0f, 0.08f), z = lerp(robot.r.z, 0f, 0.08f))
         }
         robot.p = robot.p.copy(y = lerp(robot.p.y, if (rig.hasLegs) RobotBaseY else RestY, 0.1f))
@@ -627,6 +685,61 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
         robot.apply()
         body.apply()
     }
+
+    /** いまの向き (スワイプでページを移ったとき、回した分を戻す用)。 */
+    fun saveTurn(): V3 = robot.r
+
+    fun restoreTurn(r: V3) {
+        robot.r = r
+        robot.apply()
+    }
+
+    /** 床をタップ: 真ん中へ戻ってくる (お散歩のオン・オフに関係なく)。 */
+    fun recall() {
+        val d = V3(robot.p.x, 0f, robot.p.z).length
+        if (d < 0.08f) {
+            startReaction(Reaction.Bob, 0.5f, "ここにいるよ！", AidyFace.Happy)
+            return
+        }
+        recalling = true
+        aiState = AIState.Idle
+        onStatus("呼ばれた！ 戻るね")
+    }
+
+    private fun tickRecall() {
+        var dir = V3(-robot.p.x, 0f, -robot.p.z)
+        val dist = dir.length
+        if (dist > 0.04f) {
+            dir = dir.normalized()
+            robot.p = robot.p + dir * min(MoveSpeed * 1.8f, dist)
+            turnToward(atan2(dir.x, dir.z), 0.18f)
+            animTime += 0.24f
+            rig.swingLegs(0.5f, animTime)
+            rig.waveHands(sin(animTime) * 0.2f)
+            body.p = body.p.copy(y = abs(sin(animTime * 2f)) * if (rig.hasLegs) 0.06f else 0.1f)
+        } else {
+            robot.p = robot.p.copy(x = 0f, z = 0f)
+            turnToward(0f, 0.2f) // カメラの方を向く
+            rig.swingLegs(0f, 0f)
+            if (abs(robot.r.y) < 0.05f) {
+                recalling = false
+                aiState = AIState.Idle
+                aiTimer = 8f // しばらく真ん中にいる
+                startReaction(Reaction.Bob, 0.6f, "ただいま！", AidyFace.Happy)
+            }
+        }
+    }
+
+    /** 向き (y 回転) を一番近い回り方で target に寄せる。 */
+    private fun turnToward(target: Float, k: Float) {
+        var d = (target - robot.r.y) % (PI * 2f)
+        if (d > PI) d -= PI * 2f
+        if (d < -PI) d += PI * 2f
+        robot.r = robot.r.copy(y = robot.r.y + d * k)
+    }
+
+    /** 付け替え画面で、さっき回したばかり (向きを保つ間)。 */
+    private fun holdingPose() = editable && now() - lastTouch < HoldPoseAfter
 
     private fun tickAI(dt: Float) {
         aiTimer -= dt

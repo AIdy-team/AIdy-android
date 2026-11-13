@@ -5,6 +5,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import androidx.compose.foundation.layout.Box
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -113,19 +118,18 @@ object AidyIcons {
     private val cache = HashMap<Pair<IconId, Int>, ImageBitmap>()
 
     /** sizePx x sizePx の白いアイコン (アルファでかたち)。 */
+    /** 作り済みならその画像、なければ null (作るのは get)。 */
+    fun cached(id: IconId, sizePx: Int): ImageBitmap? = synchronized(cache) { cache[id to max(8, sizePx)] }
+
     fun get(id: IconId, sizePx: Int): ImageBitmap {
         val size = max(8, sizePx)
         synchronized(cache) { cache[id to size]?.let { return it } }
-        val ss = 4 // 1px 未満のエッジは 4x4 スーパーサンプリング
         val scale = size / 24f
         val px = IntArray(size * size)
+        // 画素の中心で距離を測り、境界から ±0.5px をなめらかにぼかす (距離場なので 1 回で十分きれい。以前の 4x4 より 16 倍速い)
         for (y in 0 until size) for (x in 0 until size) {
-            var a = 0f
-            for (sy in 0 until ss) for (sx in 0 until ss) {
-                val p = V2((x + (sx + 0.5f) / ss) / scale, (y + (sy + 0.5f) / ss) / scale)
-                a += Sdf.clamp01(0.5f - sdf(id, p) * scale * ss)
-            }
-            a /= ss * ss
+            val p = V2((x + 0.5f) / scale, (y + 0.5f) / scale)
+            val a = Sdf.clamp01(0.5f - sdf(id, p) * scale)
             px[y * size + x] = ((a * 255f).roundToInt() shl 24) or 0xffffff
         }
         val bmp = Bitmap.createBitmap(px, size, size, Bitmap.Config.ARGB_8888).asImageBitmap()
@@ -290,6 +294,11 @@ object AidyIcons {
 @Composable
 fun Icon(id: IconId, size: Dp, color: Color, modifier: Modifier = Modifier) {
     val px = with(LocalDensity.current) { ceil(size.toPx()).toInt() }
-    val bmp = remember(id, px) { AidyIcons.get(id, px) }
-    Image(bmp, null, modifier.size(size), colorFilter = ColorFilter.tint(color))
+    // まだ作っていない絵は裏のスレッドで作る (起動時に UI スレッドを止めない)。できるまでは空けておく
+    val bmp by produceState(AidyIcons.cached(id, px), id, px) {
+        if (value == null) value = withContext(Dispatchers.Default) { AidyIcons.get(id, px) }
+    }
+    val b = bmp
+    if (b == null) Box(modifier.size(size))
+    else Image(b, null, modifier.size(size), colorFilter = ColorFilter.tint(color))
 }

@@ -24,6 +24,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
@@ -52,7 +54,10 @@ class ViewPlacement {
  * 3D ビュー上の操作 (Unity 版 AidyHomeTouch): ドラッグで回転、タップ (ホーム: なでなで / プレビュー: 面の選択)、
  * 長押しでうっとり、2 本指ピンチでズーム。プレビューでは選んだ面のモジュールをつかんで移動/取り外し。
  */
-fun Modifier.roomTouch(room: HomeRoom, placement: ViewPlacement, tray: ModuleDragTarget?) = this.pointerInput(room) {
+/** 3D ビューで本体の外を速く横にスワイプしたときのページ移動 (dir = +1 で次、-1 で前)。AidyApp が渡す。 */
+val LocalPageSwipe = staticCompositionLocalOf<((Int) -> Unit)?> { null }
+
+fun Modifier.roomTouch(room: HomeRoom, placement: ViewPlacement, tray: ModuleDragTarget?, onSwipe: ((Int) -> Unit)? = null) = this.pointerInput(room, onSwipe) {
     val holdMs = 600L
     val density = this.density
     awaitPointerEventScope {
@@ -72,6 +77,11 @@ fun Modifier.roomTouch(room: HomeRoom, placement: ViewPlacement, tray: ModuleDra
             room.draggingModel = true
             room.touched()
             var lastPos = pressPos
+            // 本体の外から始めた指: 速い横スワイプならページ移動 (回した分は元に戻す)
+            val offRobot = onSwipe != null && !room.isOverRobot(pressPos.x, pressPos.y)
+            val turn0 = room.saveTurn()
+            val velocity = VelocityTracker()
+            velocity.addPosition(first.uptimeMillis, pressPos)
 
             while (true) {
                 val remain = holdMs - (System.currentTimeMillis() - downTime)
@@ -110,7 +120,16 @@ fun Modifier.roomTouch(room: HomeRoom, placement: ViewPlacement, tray: ModuleDra
                     // 指を離した
                     room.draggingModel = false
                     val up = ev.changes.firstOrNull()?.position ?: lastPos
-                    if (draggingModule) {
+                    ev.changes.firstOrNull()?.let { velocity.addPosition(it.uptimeMillis, it.position) }
+                    val v = velocity.calculateVelocity()
+                    val vx = v.x / density
+                    val total = (up - pressPos) / density
+                    val swipe = offRobot && !draggingModule && !pinching && !held &&
+                        abs(vx) > 700f && abs(total.x) > 40f && abs(total.x) > abs(total.y) * 1.5f
+                    if (swipe) {
+                        room.restoreTurn(turn0)
+                        onSwipe?.invoke(if (vx < 0f) 1 else -1)
+                    } else if (draggingModule) {
                         tray?.endDrag(placement.origin + up)
                     } else if (held) room.holdEnd()
                     else if (moved < 8f && !pinching) room.tapAt(up.x, up.y)
@@ -121,12 +140,16 @@ fun Modifier.roomTouch(room: HomeRoom, placement: ViewPlacement, tray: ModuleDra
                 // 上で consume 済みなので positionChange() は常に 0 になる。消費を無視して移動量を読む
                 val delta = c.positionChangeIgnoreConsumed()
                 lastPos = c.position
+                velocity.addPosition(c.uptimeMillis, c.position)
 
                 // プレビュー: 選んだ面の取り付け済みモジュールをつかんだら、モジュールのドラッグ (移動/取り外し) にする
                 if (!dragStarted && (delta.x != 0f || delta.y != 0f)) {
                     dragStarted = true
-                    if (room.editable && room.selectedFace != null && tray != null && !held) {
-                        val slot = room.slotAtScreen(pressPos.x, pressPos.y, 45f, { room.moduleAt(it.id) != null })
+                    if (room.editable && tray != null && !held) {
+                        // モジュールの見た目全体 (+余白) で判定する。面を選んでいなくてもつかめる
+                        // 面を選んでいないときは、本体を回す操作とぶつからないよう余白を小さくする
+                        val slot = room.moduleAtScreen(pressPos.x, pressPos.y, if (room.selectedFace != null) 18f else 4f)
+                            ?: room.slotAtScreen(pressPos.x, pressPos.y, 45f, { room.moduleAt(it.id) != null })
                         if (slot != null) {
                             draggingModule = true
                             room.draggingModel = false
@@ -153,9 +176,8 @@ fun Modifier.roomTouch(room: HomeRoom, placement: ViewPlacement, tray: ModuleDra
 }
 
 /**
- * 3D ビュー (状態の吹き出し + 操作ヒント + ズームボタン)。Unity 版 AidyApp.View3D。
+ * 3D ビュー (操作ヒント + ズームボタン)。Unity 版 AidyApp.View3D。
  * bottomInset / topInset は上下に重ねる UI の分だけヒント・ズームボタン / 吹き出しをずらす。
- * battery なら吹き出しの横に本体の充電残量を出す (ホーム)。
  */
 @Composable
 fun View3D(
@@ -167,7 +189,6 @@ fun View3D(
     modifier: Modifier = Modifier,
     bottomInset: Dp = 0.dp,
     topInset: Dp = 0.dp,
-    battery: Boolean = false,
     tray: ModuleDragTarget? = null,
     placement: ViewPlacement = remember { ViewPlacement() },
     toast: ToastState? = null,
@@ -185,28 +206,7 @@ fun View3D(
             },
     ) {
         RoomScene(room, active, Modifier.fillMaxSize())
-        Box(Modifier.fillMaxSize().roomTouch(room, placement, tray))
-
-        // 左上: いまの状態の吹き出し (+ 充電残量)
-        Row(
-            Modifier.padding(start = 12.dp, top = 12.dp + topInset),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(
-                Modifier.pill().padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                AidyMascot(16.dp, AidyFace.Normal, state = mascot)
-                Label(stateText, 11f, Theme.Primary, true)
-            }
-            if (battery) {
-                Row(Modifier.pill().height(30.dp).padding(start = 10.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Battery(BatteryLevel)
-                }
-            }
-        }
+        Box(Modifier.fillMaxSize().roomTouch(room, placement, tray, LocalPageSwipe.current))
 
         // 操作ヒント
         Row(

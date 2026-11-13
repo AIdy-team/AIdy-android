@@ -14,6 +14,8 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -55,6 +57,8 @@ object AidyMascotArt {
     private val cache = HashMap<Pair<AidyFace, Int>, ImageBitmap>()
 
     /** sizePx 四方の画像。uiSizeDp (表示サイズ) で線の太さを調整する。 */
+    fun cached(face: AidyFace, sizePx: Int): ImageBitmap? = synchronized(cache) { cache[face to max(12, sizePx)] }
+
     fun get(face: AidyFace, sizePx: Int, uiSizeDp: Float): ImageBitmap {
         val size = max(12, sizePx)
         synchronized(cache) { cache[face to size]?.let { return it } }
@@ -235,11 +239,15 @@ fun AidyMascot(
             }
         }
     }
-    val bmp = remember(shown, px) { AidyMascotArt.get(shown, px, size.value) }
+    // 表情の絵は裏のスレッドで作る。できるまでは前の絵 (なければ空) のまま
+    var bmp by remember { mutableStateOf(AidyMascotArt.cached(shown, px)) }
+    LaunchedEffect(shown, px) {
+        bmp = AidyMascotArt.cached(shown, px) ?: withContext(Dispatchers.Default) { AidyMascotArt.get(shown, px, size.value) }
+    }
     val mod = if (interactive) modifier.clickable(
         interactionSource = remember { MutableInteractionSource() }, indication = null,
     ) { state.react(AidyFace.Happy) } else modifier
     Box(mod.size(size)) {
-        Image(bmp, null, Modifier.size(size).offset(y = (-offsetY * size.value).dp))
+        bmp?.let { Image(it, null, Modifier.size(size).offset(y = (-offsetY * size.value).dp)) }
     }
 }

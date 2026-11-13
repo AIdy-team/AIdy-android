@@ -7,6 +7,12 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.runtime.SideEffect
 import com.aidy.petrobot.three.Gfx
 import com.aidy.petrobot.three.HomeRoom
 import com.google.android.filament.Engine
@@ -50,7 +56,8 @@ val LocalGraphics = compositionLocalOf<Graphics> { error("Graphics がありま�
 fun View.setupQuality() {
     setShadowingEnabled(true)
     antiAliasing = View.AntiAliasing.FXAA
-    multiSampleAntiAliasingOptions = multiSampleAntiAliasingOptions.apply { enabled = true; sampleCount = 4 }
+    // 4 倍 MSAA は実機で発熱が大きいので切る (縁のギザギザは FXAA でならす)
+    multiSampleAntiAliasingOptions = multiSampleAntiAliasingOptions.apply { enabled = false }
     dynamicResolutionOptions = dynamicResolutionOptions.apply { enabled = false }
 }
 
@@ -68,6 +75,10 @@ fun RoomScene(room: HomeRoom, active: Boolean, modifier: Modifier = Modifier) {
     val nodes = remember { listOf<Node>(room.root) }
     val state = remember { FrameClock() }
     room.visible = active
+    // 見えていない間は描画そのものを止める (SceneView は RESUMED の間だけフレームを回す)
+    val parentLifecycle = LocalLifecycleOwner.current.lifecycle
+    val gate = remember(parentLifecycle) { GatedLifecycleOwner(parentLifecycle) }
+    SideEffect { gate.active = active }
     DisposableEffect(Unit) {
         view.setupQuality()
         onDispose { }
@@ -89,6 +100,7 @@ fun RoomScene(room: HomeRoom, active: Boolean, modifier: Modifier = Modifier) {
             cameraManipulator = null,
             onGestureListener = null,
             onTouchEvent = null,
+            lifecycle = gate.lifecycle,
             onFrame = { t -> room.frame(state.dt(t)) },
         )
     }
@@ -101,5 +113,38 @@ class FrameClock {
         val d = if (last == 0L) 0f else ((now - last) / 1e9f).coerceIn(0f, 0.25f)
         last = now
         return d
+    }
+}
+
+/**
+ * 親 (Activity) のライフサイクルに従いつつ、active でないときは STARTED で止めるライフサイクル。
+ * SceneView に渡すと、見えていないページの 3D は描画もフレーム処理もしなくなる (発熱対策)。
+ */
+class GatedLifecycleOwner(private val parent: Lifecycle) : LifecycleOwner {
+    private val registry = LifecycleRegistry(this)
+    override val lifecycle: Lifecycle get() = registry
+
+    var active = false
+        set(v) {
+            if (field == v) return
+            field = v
+            sync()
+        }
+
+    private val observer = LifecycleEventObserver { _, _ -> sync() }
+
+    init {
+        parent.addObserver(observer)
+    }
+
+    private fun sync() {
+        val p = parent.currentState
+        if (p == Lifecycle.State.DESTROYED) {
+            // 破棄は SceneView 自身が行うので、ここでは止めるだけ
+            if (registry.currentState.isAtLeast(Lifecycle.State.CREATED)) registry.currentState = Lifecycle.State.CREATED
+            return
+        }
+        val target = if (active) p else minOf(p, Lifecycle.State.STARTED)
+        registry.currentState = target
     }
 }

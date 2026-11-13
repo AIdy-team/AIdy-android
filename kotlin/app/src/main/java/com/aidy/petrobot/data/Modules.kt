@@ -13,19 +13,18 @@ import org.json.JSONObject
 import kotlin.math.abs
 
 /** 本体に取り付けるモジュールの種類。 */
-enum class ModuleKind { Ear, Tail, Tail2, Tail45, TailCurl, Hat, Legs, Face, Hand, HandLight }
+enum class ModuleKind { Ear, Tail45, TailCurl, Hat, Tv, Legs, Face, Hand, HandLight }
 
 /** モジュールの名前・アイコン・色・モデルファイル・取り付けられる面。 */
 object ModuleCatalog {
-    val All = listOf(ModuleKind.Ear, ModuleKind.Tail, ModuleKind.Tail2, ModuleKind.Tail45, ModuleKind.TailCurl, ModuleKind.Hat, ModuleKind.Legs, ModuleKind.Face, ModuleKind.Hand, ModuleKind.HandLight)
+    val All = listOf(ModuleKind.Ear, ModuleKind.Tail45, ModuleKind.TailCurl, ModuleKind.Hat, ModuleKind.Tv, ModuleKind.Legs, ModuleKind.Face, ModuleKind.Hand, ModuleKind.HandLight)
 
     fun name(k: ModuleKind) = when (k) {
         ModuleKind.Ear -> "耳"
-        ModuleKind.Tail -> "尻尾"
-        ModuleKind.Tail2 -> "尻尾2"
         ModuleKind.Tail45 -> "尻尾45"
         ModuleKind.TailCurl -> "巻き尻尾"
         ModuleKind.Hat -> "シルクハット"
+        ModuleKind.Tv -> "ブラウン管テレビ"
         ModuleKind.Legs -> "足"
         ModuleKind.Hand -> "手"
         ModuleKind.HandLight -> "ライト手"
@@ -34,8 +33,9 @@ object ModuleCatalog {
 
     fun icon(k: ModuleKind) = when (k) {
         ModuleKind.Ear -> IconId.Ear
-        ModuleKind.Tail, ModuleKind.Tail2, ModuleKind.Tail45, ModuleKind.TailCurl -> IconId.Tail
+        ModuleKind.Tail45, ModuleKind.TailCurl -> IconId.Tail
         ModuleKind.Hat -> IconId.Hat
+        ModuleKind.Tv -> IconId.Video
         ModuleKind.Legs -> IconId.Leg
         ModuleKind.Hand -> IconId.Hand
         ModuleKind.HandLight -> IconId.Flashlight
@@ -44,11 +44,10 @@ object ModuleCatalog {
 
     fun tint(k: ModuleKind): Color = when (k) {
         ModuleKind.Ear -> Theme.hex(0xf97316)
-        ModuleKind.Tail -> Theme.hex(0x8b5cf6)
-        ModuleKind.Tail2 -> Theme.hex(0x6366f1)
         ModuleKind.Tail45 -> Theme.hex(0xa855f7)
         ModuleKind.TailCurl -> Theme.hex(0x0ea5e9)
         ModuleKind.Hat -> Theme.hex(0x334155)
+        ModuleKind.Tv -> Theme.hex(0x78716c)
         ModuleKind.Legs -> Theme.hex(0x10b981)
         ModuleKind.Hand -> Theme.hex(0xec4899)
         ModuleKind.HandLight -> Theme.hex(0xeab308)
@@ -59,22 +58,22 @@ object ModuleCatalog {
     fun fits(k: ModuleKind, s: BodySlot): Boolean = when (k) {
         ModuleKind.Face -> s.isMonitor
         ModuleKind.Ear -> !s.isMonitor && (s.face == "top" || s.face == "left" || s.face == "right")
-        ModuleKind.Tail, ModuleKind.Tail2, ModuleKind.Tail45, ModuleKind.TailCurl -> !s.isMonitor && (s.face == "back" || s.face == "top")
+        ModuleKind.Tail45, ModuleKind.TailCurl -> !s.isMonitor && (s.face == "back" || s.face == "top")
         ModuleKind.Hat -> s.id == "top_2" // つばが 80mm あるので上面の真ん中だけ
+        ModuleKind.Tv -> s.id == "top_2" // 82x68mm あるので上面の真ん中だけ
         ModuleKind.Legs -> !s.isMonitor && s.face == "bottom"
         ModuleKind.Hand, ModuleKind.HandLight -> !s.isMonitor && (s.face == "left" || s.face == "right")
     }
 
-    fun isTail(k: ModuleKind) = k == ModuleKind.Tail || k == ModuleKind.Tail2 || k == ModuleKind.Tail45 || k == ModuleKind.TailCurl
+    fun isTail(k: ModuleKind) = k == ModuleKind.Tail45 || k == ModuleKind.TailCurl
 
     /** モデルファイル (assets/models/ 以下、拡張子なし)。stl → obj → 3mf の順に探す。顔はモデルを持たない (本体v2_顔ありに切り替え)。 */
     fun modelPath(k: ModuleKind): String? = when (k) {
         ModuleKind.Ear -> "models/ear"
-        ModuleKind.Tail -> "models/tail"
-        ModuleKind.Tail2 -> "models/tail2"
         ModuleKind.Tail45 -> "models/tail45"
         ModuleKind.TailCurl -> "models/tail_curl"
         ModuleKind.Hat -> "models/hat"
+        ModuleKind.Tv -> "models/tv"
         ModuleKind.Hand -> "models/hand"
         ModuleKind.HandLight -> "models/hand_light"
         ModuleKind.Legs -> "models/legs"
@@ -83,8 +82,9 @@ object ModuleCatalog {
 
     fun axis(k: ModuleKind) = when (k) {
         ModuleKind.Ear, ModuleKind.Hat -> MountAxis.ZUpFrontMinusY
-        ModuleKind.Tail, ModuleKind.Tail2, ModuleKind.Tail45 -> MountAxis.SlotTabPlusY
-        ModuleKind.TailCurl -> MountAxis.EndPlusX
+        ModuleKind.Tail45 -> MountAxis.SlotTabPlusY
+        ModuleKind.TailCurl -> MountAxis.FlatHangY
+        ModuleKind.Tv -> MountAxis.ZUpFrontMinusYCentered
         ModuleKind.Legs -> MountAxis.TopPadZUp
         else -> MountAxis.MagnetPlusX
     }
@@ -98,14 +98,21 @@ object ModuleCatalog {
 enum class MountAxis {
     /** Z 上・-Y 正面・原点 (x,y) が取り付け位置、底面を取り付け面に置く (mimi2.stl)。 */
     ZUpFrontMinusY,
+    /** Z 上・-Y 正面。底面 (Z 最小) の XY の中心を取り付け位置にする (ブラウン管テレビ.stl: 本体と同じ座標で、上面の上に置いた位置のまま届く)。 */
+    ZUpFrontMinusYCentered,
     /** -Y 方向へ突き出す。+Y 側の端 (XZ の中心) を取り付け面に置く。 */
     OutwardMinusY,
     /** +X 側の面にあるマグネット用のくぼみを本体に当てる。くぼみの中心を取り付け位置に、+Y 側の端を正面 (+Z) に向ける (手_短い*.3mf)。 */
     MagnetPlusX,
-    /** Z 上・+Y 外向き。-Y 側の台座の底面 (Y 最小の面) を取り付け面に置き、その中心を取り付け位置にして +Z 側へ反らせる (tail.stl, tail2.stl, 尻尾_45.stl)。 */
+    /** Z 上・+Y 外向き。-Y 側の台座の底面 (Y 最小の面) を取り付け面に置き、その中心を取り付け位置にして +Z 側へ反らせる (尻尾_45.stl)。 */
     SlotTabPlusY,
     /** Z 上・-X 外向き。+X 端の面 (X 最大の面) を取り付け面に置き、その中心を取り付け位置にする (尻尾_巻き2.stl)。 */
     EndPlusX,
+    /**
+     * Z 上・Y = 厚み。L 字を面に平らに沿わせる (尻尾_巻き2.stl)。Y 最小の面を本体に当て、長い棒 (X) を下へ垂らす。
+     * 短い腕 (-X 端の、Z へ伸びる部分) の中心を取り付け位置にし、腕は取り付け面の +X (背面を外から見て左) へ伸ばす。
+     */
+    FlatHangY,
     /** Z 上・-Y 正面。上面の平らな面を本体の底面に当て、その中心を取り付け位置にする。左右 2 つ入りなら X が小さい方だけ使う (足v1.3mf)。 */
     TopPadZUp,
 }
@@ -270,7 +277,7 @@ object ModuleConfig {
     val Default: Map<String, ModuleKind> = linkedMapOf(
         "top_1" to ModuleKind.Ear,
         "top_3" to ModuleKind.Ear,
-        "back_1" to ModuleKind.Tail,
+        "back_1" to ModuleKind.Tail45,
         "bottom_1" to ModuleKind.Legs,
         "bottom_3" to ModuleKind.Legs,
         "monitor" to ModuleKind.Face,

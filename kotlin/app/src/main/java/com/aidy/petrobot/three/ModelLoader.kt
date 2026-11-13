@@ -9,6 +9,7 @@ import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.zip.ZipInputStream
+import java.io.File
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
@@ -61,6 +62,12 @@ object ModelLoader {
     /** basePath: assets 内の拡張子なしのパス ("models/tail2")。stl → obj → 3mf の順に探す。 */
     fun load(basePath: String, axis: MountAxis): MeshData? {
         synchronized(cache) { if (cache.containsKey(basePath)) return cache[basePath] }
+        val m = MeshCache.get("module_" + basePath + "_" + axis.name) { loadUncached(basePath, axis) }
+        synchronized(cache) { cache[basePath] = m }
+        return m
+    }
+
+    private fun loadUncached(basePath: String, axis: MountAxis): MeshData? {
         var m: MeshData? = null
         var bytes: ByteArray? = null
         var format: String? = null
@@ -88,7 +95,6 @@ object ModelLoader {
                 Log.w("AIDY", "モデルの読込に失敗 $basePath.$format: ${e.message}")
             }
         }
-        synchronized(cache) { cache[basePath] = m }
         return m
     }
 
@@ -289,6 +295,8 @@ object ModelLoader {
             MountAxis.TopPadZUp -> topPad(src, hi.z)
             MountAxis.SlotTabPlusY -> faceCenter(src, 1, lo.y)
             MountAxis.EndPlusX -> faceCenter(src, 0, hi.x)
+            // 腕の中心 (X は -X 端から棒の太さの半分、Z は全体の中央)。棒の太さ = X の端 (Z 最小側) の Z 方向の幅
+            MountAxis.FlatHangY -> (lo.x + barWidth(src, lo, hi) * 0.5f) to (lo.z + hi.z) * 0.5f
             else -> 0f to 0f
         }
         val count = src.size - src.size % 3
@@ -297,6 +305,7 @@ object ModelLoader {
             // Unity 版と同じ取り付け面ローカル (Unity 座標) にしてから X 反転
             val u = when (axis) {
                 MountAxis.ZUpFrontMinusY -> V3(-p.x, p.z - lo.z, -p.y)
+                MountAxis.ZUpFrontMinusYCentered -> V3(-(p.x - (lo.x + hi.x) * 0.5f), p.z - lo.z, -(p.y - (lo.y + hi.y) * 0.5f))
                 MountAxis.OutwardMinusY -> {
                     val cx = (lo.x + hi.x) * 0.5f
                     val cz = (lo.z + hi.z) * 0.5f
@@ -304,12 +313,23 @@ object ModelLoader {
                 }
                 MountAxis.SlotTabPlusY -> V3(-(p.x - pocket.first), p.y - lo.y, p.z - pocket.second)
                 MountAxis.EndPlusX -> V3(-(p.y - pocket.first), hi.x - p.x, p.z - pocket.second)
+                // 下で X 反転するので、反転後が (Z → +X, Y → 外向き, -X → 上) になるようにする
+                MountAxis.FlatHangY -> V3(-(p.z - pocket.second), p.y - lo.y, -(p.x - pocket.first))
                 MountAxis.TopPadZUp -> V3(p.x - pocket.first, hi.z - p.z, -(p.y - pocket.second))
                 MountAxis.MagnetPlusX -> V3(-(p.z - pocket.second), hi.x - p.x, p.y - pocket.first)
             }
             u.mirrorX()
         }
         return withNormals(pos)
+    }
+
+    /** L 字の長い棒の太さ: +X 端 (棒の先) にある頂点の Z の幅。 */
+    private fun barWidth(src: List<V3>, lo: V3, hi: V3): Float {
+        var zMin = Float.MAX_VALUE
+        var zMax = -Float.MAX_VALUE
+        val edge = hi.x - (hi.x - lo.x) * 0.05f
+        for (p in src) if (p.x >= edge) { zMin = min(zMin, p.z); zMax = max(zMax, p.z) }
+        return if (zMax > zMin) zMax - zMin else (hi.z - lo.z) * 0.5f
     }
 
     /** 三角形の並び (3 頂点ずつ) から、外向きの巻き順と折り目付きの法線を持つメッシュを作る。 */
@@ -415,17 +435,20 @@ object BodyModel {
 
     fun load(path: String): MeshData? {
         synchronized(cache) { if (cache.containsKey(path)) return cache[path] }
-        val m = try {
-            AidyApplication.context.assets.open(path).use { parse(it.readBytes()) }
-        } catch (e: Exception) {
-            Log.w("AIDY", "本体モデルの読込に失敗 $path: ${e.message}")
-            null
+        val m = MeshCache.get("body_$path") {
+            try {
+                AidyApplication.context.assets.open(path).use { parse(it.readBytes()) }
+            } catch (e: Exception) {
+                Log.w("AIDY", "本体モデルの読込に失敗 $path: ${e.message}")
+                null
+            }
         }
         synchronized(cache) { cache[path] = m }
         return m
     }
 
-    private fun parse(b: ByteArray): MeshData? {
+    /** normalize = 中心へ寄せて最大辺 1・X -90° 回転 (本体用)。false ならファイルの座標のまま (部屋の家具)。 */
+    internal fun parse(b: ByteArray, normalize: Boolean = true): MeshData? {
         val verts = ArrayList<V3>()
         val vns = ArrayList<V3>()
         // 材質ごとの三角形 (位置・法線)
@@ -474,11 +497,11 @@ object BodyModel {
             lo = V3.min(lo, v)
             hi = V3.max(hi, v)
         }
-        val center = (lo + hi) * 0.5f
+        val center = if (normalize) (lo + hi) * 0.5f else V3.Zero
         val size = hi - lo
-        var maxDim = max(size.x, max(size.y, size.z))
+        var maxDim = if (normalize) max(size.x, max(size.y, size.z)) else 1f
         if (maxDim <= 0f) maxDim = 1f
-        val rot = Q.euler(-Math.PI.toFloat() / 2f, 0f, 0f)
+        val rot = if (normalize) Q.euler(-Math.PI.toFloat() / 2f, 0f, 0f) else Q.Identity
 
         val total = groups.values.sumOf { it.first.size }
         val positions = FloatArray(total * 3)
@@ -503,5 +526,135 @@ object BodyModel {
             outGroups += MeshData.Group(start, o - start, name)
         }
         return MeshData(positions, normals, IntArray(total) { it }, groups = outGroups)
+    }
+}
+
+/**
+ * ホームの部屋の家具 (assets/room の .obj + .mtl、Kenney Furniture Kit CC0)。
+ * 座標はファイルのまま (1 = 床 1 枚)。色は .mtl の Kd を材質ごとに使う (テクスチャなし)。
+ */
+object RoomModel {
+    class Model(val mesh: MeshData, val colors: Map<String, Int>)
+
+    private val cache = HashMap<String, Model?>()
+
+    fun load(name: String): Model? {
+        synchronized(cache) { if (cache.containsKey(name)) return cache[name] }
+        val assets = AidyApplication.context.assets
+        val m = try {
+            val mesh = MeshCache.get("room_$name") { assets.open("room/$name.obj").use { BodyModel.parse(it.readBytes(), normalize = false) } }
+            val colors = try {
+                assets.open("room/$name.mtl").use { mtl(String(it.readBytes(), Charsets.UTF_8)) }
+            } catch (e: Exception) {
+                emptyMap()
+            }
+            mesh?.let { Model(it, colors) }
+        } catch (e: Exception) {
+            Log.w("AIDY", "家具の読込に失敗 $name: ${e.message}")
+            null
+        }
+        synchronized(cache) { cache[name] = m }
+        return m
+    }
+
+    private fun mtl(text: String): Map<String, Int> {
+        val out = HashMap<String, Int>()
+        var name = ""
+        for (raw in text.split('\n')) {
+            val p = raw.trim().split(Regex("\\s+"))
+            when (p[0]) {
+                "newmtl" -> name = p.getOrElse(1) { "" }
+                "Kd" -> if (p.size >= 4) {
+                    fun c(i: Int) = (p[i].toFloat().coerceIn(0f, 1f) * 255f + 0.5f).toInt()
+                    out[name] = (0xff shl 24) or (c(1) shl 16) or (c(2) shl 8) or c(3)
+                }
+            }
+        }
+        return out
+    }
+}
+
+/**
+ * 変換済みメッシュの保存先 (cacheDir/meshes)。OBJ・STL・3MF の解析は重いので、2 回目以降の起動はここから読む。
+ * アプリを入れ直す (更新する) と作り直す (ファイル名にインストール時刻を入れる)。
+ */
+object MeshCache {
+    private const val Magic = 0x41494d31 // "AIM1"
+
+    private val dir: File by lazy {
+        File(AidyApplication.context.cacheDir, "meshes").apply {
+            mkdirs()
+            // 古い版のキャッシュは消す
+            listFiles()?.forEach { if (!it.name.endsWith("_$stamp.bin")) it.delete() }
+        }
+    }
+
+    private val stamp: Long by lazy {
+        val ctx = AidyApplication.context
+        try {
+            ctx.packageManager.getPackageInfo(ctx.packageName, 0).lastUpdateTime
+        } catch (e: Exception) {
+            0L
+        }
+    }
+
+    fun get(key: String, make: () -> MeshData?): MeshData? {
+        val file = File(dir, key.replace(Regex("[^A-Za-z0-9_.-]"), "_") + "_$stamp.bin")
+        if (file.exists()) {
+            try {
+                return read(file)
+            } catch (e: Exception) {
+                Log.w("AIDY", "メッシュのキャッシュが読めません ${file.name}: ${e.message}")
+                file.delete()
+            }
+        }
+        val m = make() ?: return null
+        try {
+            write(file, m)
+        } catch (e: Exception) {
+            Log.w("AIDY", "メッシュのキャッシュを書けません ${file.name}: ${e.message}")
+            file.delete()
+        }
+        return m
+    }
+
+    private fun write(file: File, m: MeshData) {
+        val names = m.groups.map { it.material.toByteArray(Charsets.UTF_8) }
+        val uv = m.uvs?.takeIf { it.isNotEmpty() }
+        val bytes = 4 * 6 + (m.positions.size + m.normals.size + (uv?.size ?: 0)) * 4 + m.indices.size * 4 +
+            m.groups.size * 12 + names.sumOf { it.size }
+        val bb = ByteBuffer.allocate(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        bb.putInt(Magic)
+        bb.putInt(m.positions.size)
+        bb.putInt(m.normals.size)
+        bb.putInt(uv?.size ?: 0)
+        bb.putInt(m.indices.size)
+        bb.putInt(m.groups.size)
+        bb.asFloatBuffer().put(m.positions); bb.position(bb.position() + m.positions.size * 4)
+        bb.asFloatBuffer().put(m.normals); bb.position(bb.position() + m.normals.size * 4)
+        if (uv != null) { bb.asFloatBuffer().put(uv); bb.position(bb.position() + uv.size * 4) }
+        bb.asIntBuffer().put(m.indices); bb.position(bb.position() + m.indices.size * 4)
+        for ((i, g) in m.groups.withIndex()) {
+            bb.putInt(g.start); bb.putInt(g.count); bb.putInt(names[i].size); bb.put(names[i])
+        }
+        val tmp = File(file.parentFile, file.name + ".tmp")
+        tmp.writeBytes(bb.array())
+        tmp.renameTo(file)
+    }
+
+    private fun read(file: File): MeshData {
+        val bb = ByteBuffer.wrap(file.readBytes()).order(ByteOrder.LITTLE_ENDIAN)
+        require(bb.getInt() == Magic) { "形式が違います" }
+        val np = bb.getInt(); val nn = bb.getInt(); val nu = bb.getInt(); val ni = bb.getInt(); val ng = bb.getInt()
+        val pos = FloatArray(np).also { bb.asFloatBuffer().get(it); bb.position(bb.position() + np * 4) }
+        val nor = FloatArray(nn).also { bb.asFloatBuffer().get(it); bb.position(bb.position() + nn * 4) }
+        val uv = if (nu > 0) FloatArray(nu).also { bb.asFloatBuffer().get(it); bb.position(bb.position() + nu * 4) } else null
+        val idx = IntArray(ni).also { bb.asIntBuffer().get(it); bb.position(bb.position() + ni * 4) }
+        val groups = (0 until ng).map {
+            val start = bb.getInt(); val count = bb.getInt(); val len = bb.getInt()
+            val name = ByteArray(len).also { a -> bb.get(a) }
+            MeshData.Group(start, count, String(name, Charsets.UTF_8))
+        }
+        return MeshData(pos, nor, idx, uv, if (groups.isEmpty()) listOf(MeshData.Group(0, idx.size, "")) else groups)
     }
 }

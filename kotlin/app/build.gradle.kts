@@ -46,14 +46,15 @@ android {
 val unityRoot = rootProject.projectDir.parentFile
 val modulesDir = File(unityRoot, "Modules")
 val resourcesDir = File(unityRoot, "Assets/Resources/AIDY")
+// ホームの部屋の家具 (Kenney Furniture Kit, CC0)。obj + mtl を assets/room/ に入れる
+val roomDir = File(unityRoot, "RoomAssets/kenney_furniture")
 
 val moduleModels = mapOf(
     "mimi2" to "ear",
-    "tail" to "tail",
-    "tail2" to "tail2",
     "尻尾_45" to "tail45",
     "尻尾_巻き2" to "tail_curl",
     "シルクハット" to "hat",
+    "ブラウン管テレビ" to "tv",
     "手_短い" to "hand",
     "手_短い_懐中電灯" to "hand_light",
     "足v1" to "legs",
@@ -70,6 +71,7 @@ val syncAidyAssets by tasks.registering {
     val out = layout.buildDirectory.dir("generated/aidyAssets")
     inputs.dir(resourcesDir)
     if (modulesDir.exists()) inputs.dir(modulesDir)
+    if (roomDir.exists()) inputs.dir(roomDir)
     outputs.dir(out)
     doLast {
         val dst = out.get().asFile
@@ -91,9 +93,12 @@ val syncAidyAssets by tasks.registering {
                 val f = candidates.firstOrNull { it.exists() } ?: continue
                 f.copyTo(File(dst, "models/$name.$ext"), overwrite = true)
                 found = true
+                break // 読み込みは stl → obj → 3mf の順なので、最初に見つかった 1 つだけ入れる (APK を小さく)
             }
             if (!found) logger.warn("[AIDY] モジュールのモデルがありません: $base (.stl / .obj)")
         }
+        File(dst, "room").mkdirs()
+        roomDir.listFiles()?.filter { it.extension == "obj" || it.extension == "mtl" }?.forEach { it.copyTo(File(dst, "room/${it.name}"), overwrite = true) }
     }
 }
 tasks.named("preBuild") { dependsOn(syncAidyAssets) }

@@ -29,6 +29,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.aidy.petrobot.data.AidyMarkers
+import com.aidy.petrobot.data.BodyColor
+import com.aidy.petrobot.data.ColorPattern
 import com.aidy.petrobot.data.MarkerImage
 import com.aidy.petrobot.data.MarkerStore
 import com.aidy.petrobot.data.ModuleConfig
@@ -44,12 +46,33 @@ class MarkerSheetState {
     var message by mutableStateOf("")
     /** マーカーの一覧が変わったら増やす。 */
     var version by mutableIntStateOf(0)
+    /** 新しく作るマーカーの Aidy の色 (開いたときはいまの色)。 */
+    var newColor by mutableStateOf(BodyColor.pattern)
+    var showColor by mutableStateOf(false)
+
+    /** 選んでいるマーカーの色の行に出す色。「いまの着せ替え」を選んでいるときは、これから作るマーカーの色。 */
+    val shownColor: ColorPattern get() = if (selected == AidyMarkers.MyId) newColor else AidyMarkers.color(selected)
+
+    /** 色を決めたとき。作ったマーカーならその色を保存、「いまの着せ替え」ならこれから作るマーカーの色にする。 */
+    fun pickColor(c: ColorPattern) {
+        showColor = false
+        if (selected == AidyMarkers.MyId) {
+            newColor = c
+            message = "この色で「作成」するとマーカーに保存されるよ"
+        } else {
+            MarkerStore.setColor(selected, c)
+            version++
+            message = "マーカー #$selected の色を変えたよ"
+        }
+    }
 
     /** 開く。いまの着せ替えと同じマーカーがあればそれを、なければ ID0 を選ぶ。 */
     fun open() {
         isOpen = true
         message = ""
-        selected = MarkerStore.find(ModuleConfig.current) ?: AidyMarkers.MyId
+        newColor = BodyColor.pattern
+        showColor = false
+        selected = MarkerStore.find(ModuleConfig.current, newColor) ?: AidyMarkers.MyId
     }
 
     fun close() {
@@ -57,13 +80,13 @@ class MarkerSheetState {
     }
 
     fun createFromCurrent() {
-        val same = MarkerStore.find(ModuleConfig.current)
+        val same = MarkerStore.find(ModuleConfig.current, newColor)
         if (same != null) {
             selected = same
-            message = "同じ着せ替えのマーカーがもうあるよ (#$same)"
+            message = "同じ着せ替え・同じ色のマーカーがもうあるよ (#$same)"
             return
         }
-        val id = MarkerStore.create(ModuleConfig.current)
+        val id = MarkerStore.create(ModuleConfig.current, newColor)
         if (id == null) {
             message = "マーカーがいっぱいです。使わないマーカーを削除してね"
             return
@@ -96,6 +119,15 @@ class MarkerSheetState {
 fun MarkerSheet(state: MarkerSheetState) {
     if (!state.isOpen) return
     val id = state.selected
+    if (state.showColor) {
+        ColorPatternDialog(
+            if (id == AidyMarkers.MyId) "作るマーカーのAidyの色" else "マーカー #$id のAidyの色",
+            state.shownColor,
+            if (id == AidyMarkers.MyId) ModuleConfig.current else (AidyMarkers.config(id) ?: emptyMap()),
+            onConfirm = { state.pickColor(it) },
+            onDismiss = { state.showColor = false },
+        )
+    }
     // 着せ替えが変わったら ID0 の説明も変わる
     val modulesVersion = ModuleConfig.version
     Box(Modifier.fillMaxSize()) {
@@ -138,11 +170,31 @@ fun MarkerSheet(state: MarkerSheetState) {
                     val slots = remember(id, modulesVersion, state.version) { if (live) ModuleConfig.current else AidyMarkers.config(id) }
                     Label(if (slots != null) ModuleConfig.summary(slots) else "", 12f, Theme.TextSub)
                     Label(
-                        if (live) "いつもいまの着せ替えで出るマーカー。黒い四角を${AidyMarkers.sizeMm(id)}mmで印刷してね"
-                        else "作ったときの着せ替えで出るマーカー (この端末だけ)。黒い四角を${AidyMarkers.sizeMm(id)}mmで印刷してね",
+                        if (live) "いつもいまの着せ替え・いまの色で出るマーカー。黒い四角を${AidyMarkers.sizeMm(id)}mmで印刷してね"
+                        else "作ったときの着せ替え・色で出るマーカー (この端末だけ)。黒い四角を${AidyMarkers.sizeMm(id)}mmで印刷してね",
                         11f, Theme.Primary,
                     )
                 }
+            }
+
+            // 色 (マーカーごとに保存)
+            @Suppress("UNUSED_VARIABLE") val colorVersion = BodyColor.version
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .background(Theme.Slate100, RoundedCornerShape(14.dp))
+                    .pressable(0.98f) { state.showColor = true }
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                PatternDot(state.shownColor, 30.dp)
+                Column(Modifier.weight(1f)) {
+                    Label(if (id == AidyMarkers.MyId) "作るマーカーのAidyの色" else "このマーカーのAidyの色", 12f, Theme.TextMain, true)
+                    Label("本体 " + BodyColor.hex(state.shownColor.body) + "  ・ タップで変更", 11f, Theme.TextSub)
+                }
+                Icon(IconId.ChevronRight, 12.dp, Theme.Slate400)
             }
 
             // ボタン

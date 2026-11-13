@@ -122,7 +122,7 @@ class ARController(private val g: Graphics) {
 
     var mode by mutableStateOf(ARMode.None)
         private set
-    var placement by mutableStateOf(Placement.Choose)
+    var placement by mutableStateOf(Placement.Marker)
         private set
     /** カメラを使う (AR タブの「AR」を表示中)。 */
     var cameraWanted by mutableStateOf(false)
@@ -151,10 +151,10 @@ class ARController(private val g: Graphics) {
     private var dragDistance = 0f
 
     /** マーカーの上に立つモデル (またはタップで置くモデル)。根元 = 足元、model = 足先が根元に付く高さ。 */
-    private inner class ARModel(parent: Node, config: Map<String, ModuleKind>?, ringColor: Int?) {
+    private inner class ARModel(parent: Node, config: Map<String, ModuleKind>?, ringColor: Int?, bodyColor: com.aidy.petrobot.data.ColorPattern? = null) {
         val root: Node = gfx.empty(parent, "ARModel")
         val model: Node = gfx.empty(root, "Model")
-        val rig = ModuleRig(gfx, model, ARModelSize, false, config, shadows = false)
+        val rig = ModuleRig(gfx, model, ARModelSize, false, config, shadows = false, fixedColor = bodyColor)
         val ring: Node? = ringColor?.let { makeRing(root, it) }
         val live = config == null
 
@@ -243,13 +243,27 @@ class ARController(private val g: Graphics) {
             for (models in listOf(arMarkerModels, webcamMarkerModels)) {
                 for (id in models.keys.toList()) {
                     if (id == AidyMarkers.MyId || id == AidyMarkers.CardId) continue
-                    models.remove(id)!!.root.destroyTree()
+                    val m = models.remove(id)!!
+                    m.rig.release()
+                    m.root.destroyTree()
                 }
             }
         }
     }
 
     private fun now() = SystemClock.uptimeMillis() / 1000f
+
+    // マーカー検出 (CPU で画像を調べる) の回数を抑える。発熱対策
+    @Volatile private var lastSubmit = 0f
+
+    /** 次の検出を回してよいか。ふだんは 1 秒に 10 回、ARCore でマーカーを捉えているときは 1 秒に 3 回。 */
+    private fun detectDue(): Boolean {
+        val t = now()
+        val holding = mode == ARMode.AR && arMarkerModels.values.any { it.visible }
+        if (t - lastSubmit < if (holding) 0.33f else 0.1f) return false
+        lastSubmit = t
+        return true
+    }
 
     // ------------------------------------------------------------ 起動 / 停止
 
@@ -459,7 +473,7 @@ class ARController(private val g: Graphics) {
             showPlacementStatus()
         }
         tracker.tryCollect()?.forEach { applySighting(it, true) }
-        if (pageVisible && placement == Placement.Marker && !tracker.busy && tracking == TrackingState.TRACKING) submitArFrame(frame)
+        if (pageVisible && placement == Placement.Marker && !tracker.busy && tracking == TrackingState.TRACKING && detectDue()) submitArFrame(frame)
     }
 
     /** ARCore のカメラ画像 (CPU 側、撮像素子の向き) を輝度で取り出して検出に回す。 */
@@ -599,7 +613,9 @@ class ARController(private val g: Graphics) {
         models[id]?.let { return it }
         val config = AidyMarkers.config(id)
         if (config == null && id != AidyMarkers.MyId) return null
-        val m = ARModel(if (ar) arRoot else fbRoot, config, null)
+        // いまの着せ替えマーカーはいまの色に追従、それ以外はマーカーに保存した色
+        val color = if (id == AidyMarkers.MyId) null else AidyMarkers.color(id)
+        val m = ARModel(if (ar) arRoot else fbRoot, config, null, color)
         models[id] = m
         return m
     }
@@ -614,7 +630,7 @@ class ARController(private val g: Graphics) {
             videoW = W
             videoH = H
             videoRotation = img.imageInfo.rotationDegrees
-            if (!pageVisible || placement != Placement.Marker || mode != ARMode.Webcam || tracker.busy) return
+            if (!pageVisible || placement != Placement.Marker || mode != ARMode.Webcam || tracker.busy || !detectDue()) return
             val div = if (max(W, H) > 800) 2 else 1
             val w = W / div
             val h = H / div
@@ -716,7 +732,8 @@ private fun ARCoreHost(c: ARController) {
         materialLoader = g.materialLoader,
         environmentLoader = g.environmentLoader,
         sessionConfiguration = { _, config ->
-            config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
+            // マーカーだけで表示するので平面は探さない (CPU の節約)
+            config.planeFindingMode = if (c.placement == Placement.Free) Config.PlaneFindingMode.HORIZONTAL else Config.PlaneFindingMode.DISABLED
             config.lightEstimationMode = Config.LightEstimationMode.DISABLED
             config.focusMode = Config.FocusMode.AUTO
             config.depthMode = Config.DepthMode.DISABLED

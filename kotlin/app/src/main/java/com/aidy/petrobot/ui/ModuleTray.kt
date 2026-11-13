@@ -253,7 +253,7 @@ class ModuleTrayState(private val room: HomeRoom, private val placement: ViewPla
         hover = null
         ghost = window
         room.setDropState(kind, null)
-        setHint(if (fromSlot != null) "別のスロットへ移動 / トレイで離すと取り外し" else "${ModuleCatalog.name(kind)}を光っている丸へ")
+        setHint(if (fromSlot != null) "別のスロットへ移動 / Aidyの外かトレイで離すと取り外し" else "${ModuleCatalog.name(kind)}を光っている丸へ")
         drag(window)
     }
 
@@ -288,7 +288,8 @@ class ModuleTrayState(private val room: HomeRoom, private val placement: ViewPla
                 if (old != null) "${BodyLayout.faceLabel(s.face)}の${s.label}を ${ModuleCatalog.name(old)} → ${ModuleCatalog.name(kind)} に切り替えました"
                 else "${BodyLayout.faceLabel(s.face)}の${s.label}に${ModuleCatalog.name(kind)}を取り付けました",
             )
-        } else if (from != null && overTray) {
+        } else if (from != null && (overTray || (target == null && !placement.toLocal(window).let { room.isOverRobot(it.x, it.y) }))) {
+            // トレイの上か、Aidy から離れた所で指を離したら取り外し
             ModuleConfig.detach(from)
             setHint("${ModuleCatalog.name(kind)}を取り外しました")
         } else if (target == null && placement.toLocal(window).let { room.slotAtScreen(it.x, it.y, SnapDp, null) } != null) {

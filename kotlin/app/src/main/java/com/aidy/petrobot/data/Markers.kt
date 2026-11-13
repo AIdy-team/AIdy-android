@@ -42,6 +42,13 @@ object AidyMarkers {
         else -> "着せ替えAidy #$id"
     }
 
+    /** そのマーカーで出す色のパターン。いまの着せ替えマーカーはいまの色、名刺は標準のグレー。 */
+    fun color(id: Int): ColorPattern = when (id) {
+        MyId -> BodyColor.pattern
+        CardId -> ColorPattern.Default
+        else -> MarkerStore.color(id) ?: ColorPattern.Default
+    }
+
     /** そのマーカーで出す構成。null = いまの着せ替え (ModuleConfig)。 */
     fun config(id: Int): Map<String, ModuleKind>? = when (id) {
         MyId -> null
@@ -57,30 +64,45 @@ object AidyMarkers {
 object MarkerStore {
     private const val PrefKey = "aidy.markers.v1"
     private const val FirstId = 2
-    private var saved: TreeMap<Int, Map<String, ModuleKind>>? = null
 
-    /** 作った・消したとき。 */
+    private class Entry(val slots: Map<String, ModuleKind>, var color: ColorPattern?)
+
+    private var saved: TreeMap<Int, Entry>? = null
+
+    /** 作った・消した・色を変えたとき。 */
     val changed = mutableListOf<() -> Unit>()
 
     val ids: List<Int> get() = load().keys.toList()
 
-    fun get(id: Int): Map<String, ModuleKind>? = load()[id]
+    fun get(id: Int): Map<String, ModuleKind>? = load()[id]?.slots
 
-    /** 同じ構成のマーカーがあればその ID。 */
-    fun find(slots: Map<String, ModuleKind>): Int? =
-        load().entries.firstOrNull { it.value == slots }?.key
+    /** そのマーカーの色のパターン (作ったときの色)。古いマーカーなど色がなければ null。 */
+    fun color(id: Int): ColorPattern? = load()[id]?.color
 
-    /** いまの構成を空いている ID に保存する。空きがなければ null。 */
-    fun create(slots: Map<String, ModuleKind>): Int? {
+    /** 同じ構成・同じ色のマーカーがあればその ID。 */
+    fun find(slots: Map<String, ModuleKind>, color: ColorPattern): Int? =
+        load().entries.firstOrNull { it.value.slots == slots && (it.value.color ?: ColorPattern.Default) == color }?.key
+
+    /** 構成と色を空いている ID に保存する。空きがなければ null。 */
+    fun create(slots: Map<String, ModuleKind>, color: ColorPattern): Int? {
         val map = load()
         for (id in FirstId until ArucoDetector.Dict4x4_50.size) {
             if (map.containsKey(id)) continue
-            map[id] = LinkedHashMap(slots)
+            map[id] = Entry(LinkedHashMap(slots), color)
             save()
             changed.toList().forEach { it() }
             return id
         }
         return null
+    }
+
+    /** 作ったマーカーの色を変える。 */
+    fun setColor(id: Int, color: ColorPattern) {
+        val e = load()[id] ?: return
+        if (e.color == color) return
+        e.color = color
+        save()
+        changed.toList().forEach { it() }
     }
 
     fun delete(id: Int) {
@@ -89,23 +111,26 @@ object MarkerStore {
         changed.toList().forEach { it() }
     }
 
-    // 形式: "2=top_1:Ear,back_1:Tail;3=..." (Unity 版と同じ)
-    private fun load(): TreeMap<Int, Map<String, ModuleKind>> {
+    // 形式: "2=top_1:Ear,back_1:Tail45|#A0A0A0,*#2F4A8A,top_1#FFFFFF;3=..." (Unity 版の形式 + "|色のパターン")
+    private fun load(): TreeMap<Int, Entry> {
         saved?.let { return it }
-        val map = TreeMap<Int, Map<String, ModuleKind>>()
+        val map = TreeMap<Int, Entry>()
         saved = map
         for (entry in Prefs.getString(PrefKey, "").split(';')) {
             if (entry.isEmpty()) continue
             val head = entry.split('=')
             if (head.size != 2) continue
             val id = head[0].toIntOrNull() ?: continue
-            map[id] = ModuleConfig.parse(head[1])
+            val body = head[1].split('|')
+            map[id] = Entry(ModuleConfig.parse(body[0]), body.getOrNull(1)?.let { ColorPattern.parse(it) })
         }
         return map
     }
 
     private fun save() {
-        Prefs.putString(PrefKey, load().entries.joinToString(";") { "${it.key}=${ModuleConfig.format(it.value)}" })
+        Prefs.putString(PrefKey, load().entries.joinToString(";") { (id, e) ->
+            "$id=${ModuleConfig.format(e.slots)}" + (e.color?.let { "|" + it.format() } ?: "")
+        })
     }
 }
 
