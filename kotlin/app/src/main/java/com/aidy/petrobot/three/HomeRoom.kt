@@ -225,6 +225,8 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
             return
         }
         if (face == null) {
+            // 面を選択中は、ほかの面のパーツのタップには反応しない
+            if (selectedFace != null && moduleAtScreen(x, y, 8f) != null) return
             if (selectedFace != null) {
                 selectFace(null)
                 onStatus("面の選択を解除しました")
@@ -268,9 +270,9 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
             val n = when (axis) { 0 -> V3(side, 0f, 0f); 1 -> V3(0f, side, 0f); else -> V3(0f, 0f, side) }
             for (f in BodyLayout.Faces) if ((BodyLayout.faceNormal(f) dot n) > 0.9f) return f
         }
-        // 箱から外れた所: 尻尾・耳の先など、モジュールの見た目に重なっていればその面
-        val slot = moduleAtScreen(x, y, 8f)
-            ?: slotAtScreen(x, y, 70f, { ModuleConfig.at(it.id) != null }, onlyFacing = false, onlySelected = false)
+        // 箱から外れた所: 尻尾・耳の先など、モジュールの見た目に重なっていればその面 (面を選択中はその面のモジュールだけ)
+        val slot = moduleAtScreen(x, y, 8f, onlySelected = true)
+            ?: slotAtScreen(x, y, 70f, { ModuleConfig.at(it.id) != null }, onlyFacing = false)
         return slot?.let { BodyLayout.get(it)?.face }
     }
 
@@ -302,14 +304,15 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
 
     /**
      * 画面上で指が重なっている取り付け済みモジュール (見た目の外形を画面に写した四角 + marginDp の余白)。
-     * 面を選んでいなくても、どの面のモジュールでもつかめる。重なっているときは手前のものを選ぶ。
+     * onlySelected なら選択中の面のモジュールだけ (面を選んでいなければ全部)。重なっているときは手前のものを選ぶ。
      */
-    fun moduleAtScreen(x: Float, y: Float, marginDp: Float = 18f): String? {
+    fun moduleAtScreen(x: Float, y: Float, marginDp: Float = 18f, onlySelected: Boolean = false): String? {
         val margin = marginDp * density
         val bw = bodyWorld()
         var hit: String? = null
         var bestScore = Float.MAX_VALUE
         for (fr in rig.frameList) {
+            if (onlySelected && selectedFace != null && fr.slot.face != selectedFace) continue
             val hull = rig.hullOf(fr.slot.id)
             if (hull.isEmpty()) continue
             val sw = bw * Pose(fr.slot.position * BodySize, fr.slot.mountRotation)

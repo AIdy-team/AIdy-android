@@ -145,10 +145,10 @@ fun Modifier.roomTouch(room: HomeRoom, placement: ViewPlacement, tray: ModuleDra
                 // プレビュー: 選んだ面の取り付け済みモジュールをつかんだら、モジュールのドラッグ (移動/取り外し) にする
                 if (!dragStarted && (delta.x != 0f || delta.y != 0f)) {
                     dragStarted = true
-                    if (room.editable && tray != null && !held) {
-                        // モジュールの見た目全体 (+余白) で判定する。面を選んでいなくてもつかめる
-                        // 面を選んでいないときは、本体を回す操作とぶつからないよう余白を小さくする
-                        val slot = room.moduleAtScreen(pressPos.x, pressPos.y, if (room.selectedFace != null) 18f else 4f)
+                    if (room.editable && tray != null && !held && room.selectedFace != null) {
+                        // 面をタップで選んでから、その面のモジュールだけつかめる (ほかの面のモジュールは反応しない)
+                        // モジュールの見た目全体 (+余白) で判定する
+                        val slot = room.moduleAtScreen(pressPos.x, pressPos.y, 18f, onlySelected = true)
                             ?: room.slotAtScreen(pressPos.x, pressPos.y, 45f, { room.moduleAt(it.id) != null })
                         if (slot != null) {
                             draggingModule = true
