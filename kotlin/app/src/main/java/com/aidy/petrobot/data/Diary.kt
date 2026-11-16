@@ -622,8 +622,13 @@ data class ScheduleItem(
     val time: String = "",
     val title: String = "",
     val memo: String = "",
+    /** "" = このアプリの予定 / "phone" = スマホの別アプリのカレンダー (読むだけ・保存しない)。 */
+    val source: String = "",
+    /** source = "phone" のときのカレンダー名 (「仕事」「Google」など)。 */
+    val calendar: String = "",
 ) {
     val allDay get() = time.isEmpty()
+    val fromPhone get() = source == "phone"
 
     /** 時刻つきの予定で、その時刻をもう過ぎているか (終日の予定は過ぎない扱い)。 */
     fun isPast(now: LocalDateTime) =
@@ -654,6 +659,47 @@ object ScheduleStore {
                 else -> a.time.compareTo(b.time)
             }
         }
+    }
+
+    /** 保存しているすべての予定 (書き出し用)。日付・時刻順。 */
+    fun all(): List<ScheduleItem> = load().sortedWith(compareBy({ it.date }, { it.time }))
+
+    /** その日の予定に、スマホのカレンダーの予定 (phone) を混ぜて並べる。 */
+    fun forDateMerged(d: LocalDate, phone: List<ScheduleItem>): List<ScheduleItem> {
+        if (phone.isEmpty()) return forDate(d)
+        val now = LocalDateTime.now()
+        return (forDate(d) + phone).sortedWith { a, b ->
+            val pa = a.isPast(now)
+            val pb = b.isPast(now)
+            when {
+                pa != pb -> if (pa) 1 else -1
+                a.allDay != b.allDay -> if (a.allDay) -1 else 1
+                else -> a.time.compareTo(b.time)
+            }
+        }
+    }
+
+    /**
+     * 読み込んだ予定を混ぜる。同じ id は上書き、id が違っても日付・時刻・タイトルが同じものは重複として飛ばす。
+     * 返り値 = (追加した数, 上書きした数, 飛ばした数)。
+     */
+    fun importItems(src: List<ScheduleItem>): Triple<Int, Int, Int> {
+        val list = load()
+        var added = 0
+        var updated = 0
+        var skipped = 0
+        for (it0 in src) {
+            if (it0.date.isEmpty() || it0.title.isEmpty() || it0.fromPhone) { skipped++; continue }
+            val it = it0.copy(source = "", calendar = "")
+            val idx = if (it.id.isEmpty()) -1 else list.indexOfFirst { e -> e.id == it.id }
+            when {
+                idx >= 0 -> { if (list[idx] != it) { list[idx] = it; updated++ } else skipped++ }
+                list.any { e -> e.date == it.date && e.time == it.time && e.title == it.title } -> skipped++
+                else -> { list += if (it.id.isEmpty()) it.copy(id = UUID.randomUUID().toString().replace("-", "")) else it; added++ }
+            }
+        }
+        if (added + updated > 0) write()
+        return Triple(added, updated, skipped)
     }
 
     /** id が空なら新規追加、既存 id なら上書き。 */

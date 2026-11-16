@@ -256,11 +256,15 @@ fun animatedColor(target: Color, ms: Int = 200) = animateColorAsState(target, tw
 
 /** ページ本体 (縦スクロール、左右 16dp の余白、下は 24dp)。 */
 @Composable
-fun ScrollPage(modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+fun ScrollPage(
+    modifier: Modifier = Modifier,
+    scroll: androidx.compose.foundation.ScrollState = rememberScrollState(),
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
     Column(
         modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scroll)
             .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
         content = content,
     )

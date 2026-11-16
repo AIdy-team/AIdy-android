@@ -31,6 +31,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.aidy.petrobot.data.AidyDeviceLink
 import com.aidy.petrobot.data.BleLink
+import com.aidy.petrobot.data.CalendarBackup
+import com.aidy.petrobot.data.PhoneCalendar
+import android.Manifest
 import com.aidy.petrobot.data.BodyColor
 import com.aidy.petrobot.data.CalendarSettings
 import com.aidy.petrobot.data.ModuleCatalog
@@ -192,6 +195,8 @@ fun SettingsPage(diary: DiaryState, onOpenDiary: () -> Unit) {
         Card(null, Color.Unspecified, Color.Unspecified, "カレンダー表示", "週表示に切り替える") {
             AidySwitch(diary.weekView, { on -> diary.applyWeekView(on) })
         }
+        PhoneCalendarCard(diary)
+        CalendarBackupCard(diary)
 
         SectionTitle("操作 & ネットワーク", false)
         Card(null, Color.Unspecified, Color.Unspecified, "モジュール自動合体", "パーツSocketアタッチ機能 (ON)") { AidySwitch(true) }
@@ -306,6 +311,101 @@ private fun DeviceLinkCard() {
     Spacer(Modifier.height(10.dp))
 }
 
+
+// ---------------------------------------------------------------- 設定: スマホのカレンダーと結合
+
+/**
+ * スマホの別アプリのカレンダーの予定を、このアプリのカレンダーに一緒に出すかどうか。
+ * ON にするときにカレンダーの許可を求める。許可されなければ OFF のまま。
+ */
+@Composable
+private fun PhoneCalendarCard(diary: DiaryState) {
+    var on by remember { mutableStateOf(PhoneCalendar.active) }
+    var note by remember {
+        mutableStateOf(
+            if (PhoneCalendar.switchOn && !PhoneCalendar.hasPermission()) "カレンダーの許可が取り消されたので結合していません"
+            else "Googleカレンダーなど、スマホのカレンダーの予定を緑で表示します (読むだけ)"
+        )
+    }
+
+    fun apply(v: Boolean) {
+        PhoneCalendar.switchOn = v
+        on = PhoneCalendar.active
+        diary.phoneVersion++
+    }
+
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            apply(true)
+            note = "スマホのカレンダーの予定を一緒に表示しています"
+        } else {
+            apply(false)
+            note = "カレンダーの許可がないので結合できません (スマホの設定 > アプリ > 権限 で許可できます)"
+        }
+    }
+
+    Card(null, Color.Unspecified, Color.Unspecified, "スマホのカレンダーと結合", note) {
+        AidySwitch(on, { v ->
+            if (!v) {
+                apply(false)
+                note = "結合をやめました (スマホのカレンダーの予定は表示しません)"
+            } else if (PhoneCalendar.hasPermission()) {
+                apply(true)
+                note = "スマホのカレンダーの予定を一緒に表示しています"
+            } else {
+                launcher.launch(Manifest.permission.READ_CALENDAR)
+            }
+        })
+    }
+}
+
+// ---------------------------------------------------------------- 設定: カレンダーの書き出し・読み込み
+
+/** このアプリの予定と日記を JSON ファイルに書き出す / 読み込んで混ぜる。保存先・読み込み元は Android のファイル選択で選ぶ。 */
+@Composable
+private fun CalendarBackupCard(diary: DiaryState) {
+    val scope = rememberCoroutineScope()
+    var status by remember { mutableStateOf("予定と日記をファイルに保存・復元できます (スマホのカレンダーの予定は含みません)") }
+    var statusColor by remember { mutableStateOf(Theme.TextSub) }
+    var busy by remember { mutableStateOf(false) }
+
+    fun show(r: CalendarBackup.Result) {
+        busy = false
+        status = r.message
+        statusColor = if (r.ok) Theme.Green else Theme.hex(0xef4444)
+        if (r.ok) diary.version++
+    }
+
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(CalendarBackup.MimeType)) { uri ->
+        if (uri == null) { busy = false; return@rememberLauncherForActivityResult }
+        scope.launch { show(CalendarBackup.export(uri)) }
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) { busy = false; return@rememberLauncherForActivityResult }
+        scope.launch { show(CalendarBackup.import(uri)) }
+    }
+
+    Column(
+        Modifier.fillMaxWidth().box(Color.White, 16.dp, 1.dp, Theme.Slate100).padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Label("カレンダーの書き出し・読み込み", 14f, Theme.TextMain, true)
+        Label(status, 12f, statusColor)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SmallButton("書き出す", Theme.Primary, Color.White) {
+                if (busy) return@SmallButton
+                busy = true
+                exportLauncher.launch(CalendarBackup.defaultFileName())
+            }
+            SmallButton("読み込む", Theme.Slate100, Theme.Slate600) {
+                if (busy) return@SmallButton
+                busy = true
+                importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
+            }
+        }
+    }
+    Spacer(Modifier.height(10.dp))
+}
 
 // ---------------------------------------------------------------- 設定: 今後の開発予定 (仕様書にあるが本体・アプリにまだない口)
 

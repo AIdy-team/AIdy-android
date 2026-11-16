@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,6 +42,7 @@ import com.aidy.petrobot.data.DiaryComposer
 import com.aidy.petrobot.data.DiaryDemo
 import com.aidy.petrobot.data.DiaryEntry
 import com.aidy.petrobot.data.DiaryStore
+import com.aidy.petrobot.data.PhoneCalendar
 import com.aidy.petrobot.data.ScheduleItem
 import com.aidy.petrobot.data.ScheduleStore
 import com.aidy.petrobot.data.key
@@ -66,6 +69,9 @@ private val Amber = Theme.hex(0xf59e0b)
 private val ChipBg = Theme.hex(0xfef3c7)
 private val ChipFg = Theme.hex(0xb45309)
 private val Danger = Theme.hex(0xef4444)
+// スマホの別アプリのカレンダーの予定 (このアプリの予定と色で見分ける)
+private val PhoneChipBg = Theme.hex(0xdcfce7)
+private val PhoneChipFg = Theme.hex(0x15803d)
 
 /** 日曜 = 0 の曜日。 */
 private fun LocalDate.dow() = dayOfWeek.value % 7
@@ -103,6 +109,14 @@ class DiaryState {
 
     // 本体の /api/days (会話・記録がある日、同期前でもカレンダーに印をつける)
     var deviceDays by mutableStateOf<Set<String>>(emptySet())
+
+    // スマホの別アプリのカレンダー (設定で ON のときだけ。読むだけで保存しない)
+    var phoneEvents by mutableStateOf<Map<String, List<ScheduleItem>>>(emptyMap())
+    /** 設定で結合の ON/OFF を変えたら増やす (読み直し)。 */
+    var phoneVersion by mutableIntStateOf(0)
+
+    /** その日の予定 (このアプリ + スマホのカレンダー)。 */
+    fun plansFor(d: LocalDate): List<ScheduleItem> = ScheduleStore.forDateMerged(d, phoneEvents[d.key()].orEmpty())
 
     /**
      * 保存データ (日記・予定) は Compose の状態ではないので、それを読む部品はこれを呼んで
@@ -195,7 +209,19 @@ fun DiaryPage(state: DiaryState, shown: Boolean) {
         }
     }
 
-    ScrollPage {
+    // スマホのカレンダーの予定を、いま見ている月・週の前後 1 週間ぶん読む
+    LaunchedEffect(shown, state.month, state.weekAnchor, state.phoneVersion) {
+        if (!shown) return@LaunchedEffect
+        val monthStart = state.month.atDay(1)
+        val monthEnd = state.month.atEndOfMonth()
+        val from = minOf(monthStart, state.weekAnchor).minusDays(7)
+        val to = maxOf(monthEnd, state.weekAnchor.plusDays(6)).plusDays(7)
+        state.phoneEvents = PhoneCalendar.load(from, to)
+    }
+
+    val scroll = rememberScrollState()
+    Box(Modifier.fillMaxSize()) {
+    ScrollPage(scroll = scroll) {
         state.observe()
         // ---- Header
         Spacer(Modifier.height(6.dp))
@@ -230,6 +256,26 @@ fun DiaryPage(state: DiaryState, shown: Boolean) {
         if (entry != null) EntryCard(state, entry) else EmptyCard(state) { startSync(false) }
         Spacer(Modifier.height(12.dp))
         ScheduleCard(state)
+    }
+        // 会話ログが長いとき用: ある程度下にスクロールしたら「上に戻る」ボタンを出す
+        val showTop = scroll.value > 600
+        if (showTop) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 18.dp, bottom = 22.dp)
+                    .size(48.dp)
+                    .shadow(6.dp, RoundedCornerShape(24.dp))
+                    .pressable(0.9f) { scope.launch { scroll.animateScrollTo(0) } }
+                    .background(Theme.Primary, RoundedCornerShape(24.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(IconId.ChevronRight, 14.dp, Color.White, Modifier.rotate(-90f))
+                    Label("上へ", 9f, Color.White, true)
+                }
+            }
+        }
     }
 }
 
@@ -275,7 +321,7 @@ private fun Calendar(state: DiaryState) {
         Spacer(Modifier.height(4.dp))
         for (row in rows) {
             // 行の中でいちばん多い予定タイトル数に合わせて、その週の行だけ縦に伸ばす
-            val chips = row.maxOf { d -> if (d == null || DiaryStore.get(d) != null) 0 else min(ScheduleStore.forDate(d).size, MaxChips) }
+            val chips = row.maxOf { d -> if (d == null || DiaryStore.get(d) != null) 0 else min(state.plansFor(d).size, MaxChips) }
             val h = CellHeight + max(0, chips - 1) * ChipPitch
             Row(Modifier.fillMaxWidth().height(h.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                 for (d in row) {
@@ -368,7 +414,7 @@ private fun DayCell(state: DiaryState, date: LocalDate, today: LocalDate) {
             // 本体にはあるがまだ同期していない会話 (/api/days)。同期すると日記になる
             Box(Modifier.align(Alignment.TopCenter).padding(top = 32.dp).size(6.dp).background(Theme.Slate300, RoundedCornerShape(3.dp)))
         }
-        val plans = ScheduleStore.forDate(date)
+        val plans = state.plansFor(date)
         val shownCount = if (entry == null) min(plans.size, MaxChips) else 0 // 日記のある日はミニ Aidy を優先
         val hidden = plans.size - shownCount
         for (i in 0 until shownCount) {
@@ -378,10 +424,10 @@ private fun DayCell(state: DiaryState, date: LocalDate, today: LocalDate) {
                     .padding(top = (ChipTop + i * ChipPitch - 1f).dp, start = 2.dp, end = 2.dp)
                     .fillMaxWidth()
                     .height(ChipHeight.dp)
-                    .background(ChipBg, RoundedCornerShape(4.dp)),
+                    .background(if (plans[i].fromPhone) PhoneChipBg else ChipBg, RoundedCornerShape(4.dp)),
                 contentAlignment = Alignment.Center,
             ) {
-                Label(plans[i].title, 8f, ChipFg, true, Modifier.padding(horizontal = 2.dp), maxLines = 1, align = TextAlign.Center)
+                Label(plans[i].title, 8f, if (plans[i].fromPhone) PhoneChipFg else ChipFg, true, Modifier.padding(horizontal = 2.dp), maxLines = 1, align = TextAlign.Center)
             }
         }
         // 表示しきれない予定の件数 (右上の「+1」)
@@ -461,6 +507,15 @@ private fun EntryCard(state: DiaryState, e: DiaryEntry) {
         if (state.logsOpen) {
             Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 for (l in e.logs) ChatRow(l)
+                Row(
+                    Modifier.fillMaxWidth().clickable { state.logsOpen = false }.padding(vertical = 6.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(IconId.ChevronRight, 10.dp, Theme.Slate400, Modifier.rotate(-90f))
+                    Spacer(Modifier.size(6.dp))
+                    Label("会話ログを閉じる", 12f, Theme.Slate400, true)
+                }
             }
         }
     }
@@ -525,7 +580,10 @@ private fun ScheduleCard(state: DiaryState) {
             Label("予定", 14f, Theme.TextMain, true, Modifier.weight(1f))
             if (state.editingId == null) SmallButton("＋ 追加", Theme.PrimaryLight, Theme.Primary) { state.openEditor("") }
         }
-        val list = ScheduleStore.forDate(state.selected)
+        val list = state.plansFor(state.selected)
+        if (PhoneCalendar.active) {
+            Label("緑はスマホのカレンダーの予定 (見るだけ。変更は元のアプリで)", 10f, PhoneChipFg)
+        }
         if (list.isEmpty() && state.editingId == null) {
             Spacer(Modifier.height(6.dp))
             Label("この日の予定はまだないよ", 12f, Theme.Slate400)
@@ -545,11 +603,12 @@ private fun ScheduleCard(state: DiaryState) {
 private fun ScheduleRow(state: DiaryState, item: ScheduleItem) {
     state.observe()
     val past = item.isPast(LocalDateTime.now())
+    val phone = item.fromPhone
     Row(
         Modifier
             .fillMaxWidth()
-            .pressable(0.98f) { state.openEditor(item.id) }
-            .background(Theme.Slate100, RoundedCornerShape(12.dp))
+            .let { if (phone) it else it.pressable(0.98f) { state.openEditor(item.id) } }
+            .background(if (phone) Theme.hex(0xf0fdf4) else Theme.Slate100, RoundedCornerShape(12.dp))
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -559,7 +618,8 @@ private fun ScheduleRow(state: DiaryState, item: ScheduleItem) {
             Label(item.title, 13f, Theme.TextMain, true)
             if (item.memo.isNotEmpty()) Label(item.memo, 11f, Theme.TextSub)
         }
-        Label("編集", 11f, Theme.Slate400)
+        if (phone) Label(item.calendar.ifEmpty { "スマホ" }, 10f, PhoneChipFg, true, maxLines = 1)
+        else Label("編集", 11f, Theme.Slate400)
     }
 }
 
