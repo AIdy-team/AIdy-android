@@ -87,9 +87,9 @@ fun StrokeIcon(paths: List<String>, size: Dp, color: Color, strokeWidth: Float =
 
 /** ホームの右下に浮かぶ丸ボタン (白・影付き・アイコンのみ)。 */
 @Composable
-fun HomeRoundButton(label: String, icon: List<String>, size: Dp, iconSize: Dp, onClick: () -> Unit) {
+fun HomeRoundButton(label: String, icon: List<String>, size: Dp, iconSize: Dp, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(
-        Modifier
+        modifier
             .size(size)
             .semantics { contentDescription = label; role = Role.Button }
             .pressable(0.92f, onClick = onClick)

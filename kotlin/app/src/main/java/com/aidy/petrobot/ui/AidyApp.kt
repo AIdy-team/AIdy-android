@@ -31,6 +31,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -66,6 +67,48 @@ private const val PageRemote = 2
 private const val PageAR = 3
 private const val PageSettings = 4
 private const val PageCount = 5
+
+/** 初回起動のチュートリアルの手順 (実際の画面をさわって覚える)。 */
+private fun coachSteps() = listOf(
+    CoachStep("はじめまして！ ぼくはAidy。これからいっしょに、このアプリの使いかたを練習しよう！", page = PageHome, face = AidyFace.Happy),
+    // ---- ホーム
+    CoachStep("まずはぼくを指でトンとタップして、呼んでみて！", "home3d", PageHome, waitFor = "call", praise = "なあに？ ちゃんとこっちを向いたよ！", needs = "home"),
+    CoachStep("こんどは、ぼくの体の上で指を左右にこすってみて。なでなでになるよ！", "home3d", PageHome, waitFor = "pet", praise = "きもちいい〜。なでてくれてありがとう！", needs = "home", gesture = CoachGesture.Rub),
+    CoachStep(
+        "指でぼくを大きくなぞると、くるっと回るよ。やってみて！", "home3d", PageHome,
+        waitFor = "rotate", praise = "くるくる〜。上手に回せたね！", needs = "home", gesture = CoachGesture.Swipe,
+    ),
+    CoachStep(
+        "ぼくの色を変えてみよう！ 右下のシャツのボタンで着せ替えを開いて、「色」タブで好きな色をタップしてね。", "color", PageHome,
+        waitFor = "colorSet", praise = "すてきな色！ ありがとう！ 着せ替えは右上の「できた！」で終われるよ。", needs = "home",
+    ),
+    // ---- 日記
+    CoachStep("つぎは日記を見てみよう。下の「日記」をタップしてみて！", "tab$PageDiary", PageHome, waitFor = "page$PageDiary", praise = "日記の画面に来たよ！"),
+    CoachStep(
+        "カレンダーの好きな日にちをタップしてみて！ その日の日記と予定が見られるよ。", "calendar", PageDiary,
+        waitFor = "day", praise = "日記がある日には、小さなぼくが出るんだ！",
+    ),
+    CoachStep("本体とつないだら、「同期」を押してね。ぼくとおしゃべりした内容から、日記ができるよ。", "diarySync", PageDiary),
+    CoachStep("ここで予定を入れられるよ。「＋ 追加」から書いてね。", "schedule", PageDiary),
+    // ---- リモコン
+    CoachStep("下の「リモコン」をタップしてみて！", "tab$PageRemote", PageDiary, waitFor = "page$PageRemote", praise = "リモコンの画面だよ！"),
+    CoachStep("ここで、ぼくの声の大きさや話す速さを変えられるよ。本体とつないでから使ってね。", "voice", PageRemote),
+    // ---- AR (付け替え)
+    CoachStep("下の「AR」をタップしてみて！", "tab$PageAR", PageRemote, waitFor = "page$PageAR", praise = "付け替えの画面に来たよ！"),
+    CoachStep(
+        "パーツを付ける場所を選ぼう。ぼくの体の横の面（顔がないほう）をタップしてみて！", "ar3d", PageAR,
+        waitFor = "face", praise = "その面が青く光ったね！", needs = "ar",
+    ),
+    CoachStep(
+        "下に、その面に付けられるパーツが出てきたよ。パーツを指で押さえたまま、ぼくの体の光っている丸まで引っぱってみて！", "arEdit", PageAR,
+        waitFor = "attach", praise = "似合うかな？ ありがとう！", needs = "ar",
+    ),
+    CoachStep("上の「AR」に切りかえると、カメラに写したマーカーの上にぼくが出てくるよ。", "arSwitch", PageAR, needs = "ar"),
+    // ---- 設定
+    CoachStep("最後に、右上の歯車をタップしてみて！", "gear", PageAR, waitFor = "page$PageSettings", praise = "設定の画面だよ！"),
+    CoachStep("ここで本体とつなぐよ。本体に出るQRコードを「QRコードを読み取る」で写して、「保存して接続を試す」を押してね。", "deviceLink", PageSettings),
+    CoachStep("これでおしまい！ 使いかたを忘れたら、設定のいちばん下の「使いかた」を見てね。これからよろしくね！", page = PageSettings, face = AidyFace.Happy),
+)
 
 // 設定はタブバーに出さず、ヘッダーのギアアイコンからのみ開く
 private val TabLabels = listOf("ホーム", "日記", "リモコン", "AR")
@@ -121,6 +164,27 @@ fun AidyApp(app: AppState) {
     // 着せ替え画面を見ている間だけ横スワイプのページ移動を止める (3D を回す操作とぶつかるため。タブでは移動できる)
     val dressingShown = dressing && current == PageHome
 
+    // 使いかたガイド (設定の「使いかた」から開く紙芝居)
+    var showGuide by rememberSaveable { mutableStateOf(false) }
+
+    // 初回起動のチュートリアル (実際の画面で Aidy が案内する)。設定の「使いかた」からも始められる。
+    // 画面の作り直し (設定変更など) でここがもう一度走っても、進めている途中なら最初に戻さない
+    LaunchedEffect(Unit) { if (!Coach.done && !Coach.active) Coach.start(coachSteps()) }
+    Coach.homeReady = app.home != null
+    Coach.arReady = app.ar != null
+    // ページを移ったら知らせる (「日記をタップしてみて」などの手順用)
+    LaunchedEffect(pager) { snapshotFlow { pager.settledPage }.collect { Coach.event("page$it") } }
+    // 手順ごとに見せるページへ移る (ページを移るのを待っている手順はそのまま)
+    val coachStep = Coach.step
+    LaunchedEffect(coachStep) {
+        val s = coachStep ?: return@LaunchedEffect
+        val p = s.page ?: return@LaunchedEffect
+        if (s.waitFor?.startsWith("page") != true && pager.currentPage != p) goTo(p)
+        if (s.page == PageAR && s.needs == "ar") app.ar?.setARMode(false)
+        // お散歩中で画面のはしにいても、指差しのところ (まんなか) に呼び戻す
+        if (s.target == "home3d") app.home?.room?.recall()
+    }
+
     // ページ切替 (OnPageChanged)。AR ページは読み込み後にできるので、できたときにも合わせる
     val arUi = app.ar
     LaunchedEffect(pager, arUi) {
@@ -140,12 +204,13 @@ fun AidyApp(app: AppState) {
 
     Box(Modifier.fillMaxSize().background(Color.White)) {
         // 3D ビューで本体の外を速くスワイプしたらページを移る (dir = +1 で次、-1 で前)
-        CompositionLocalProvider(LocalPageSwipe provides (if (dressingShown) null else ({ dir: Int -> goTo((pager.currentPage + dir).coerceIn(0, PageCount - 1)) })))  {
+        CompositionLocalProvider(LocalPageSwipe provides (if (dressingShown) null else ({ dir: Int -> if (!Coach.active) goTo((pager.currentPage + dir).coerceIn(0, PageCount - 1)) })))  {
         Column(Modifier.fillMaxSize().background(Theme.Device).statusBarsPadding()) {
             Header { goTo(PageSettings) }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 // 全ページを作ったままにする (ページの使い回しで 3D ビュー (SurfaceView) の Filament の View が壊れるのを防ぐ)
-                HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = PageCount, key = { it }, userScrollEnabled = !dressingShown) { page ->
+                // チュートリアル中も指のスワイプでページを移らない (案内しているページから外れないように。移動はタブ・歯車で)
+                HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = PageCount, key = { it }, userScrollEnabled = !dressingShown && !Coach.active) { page ->
                     when (page) {
                         PageHome -> app.home?.let { home ->
                             HomePage(home, homeVisible) {
@@ -156,7 +221,12 @@ fun AidyApp(app: AppState) {
                         PageDiary -> DiaryPage(app.diary, diaryVisible && pager.settledPage == PageDiary)
                         PageRemote -> RemotePage(pager.settledPage == PageRemote)
                         PageAR -> arUi?.let { ARPage(it, arVisible) { app.markerSheet.open() } } ?: ModelLoadingView()
-                        PageSettings -> SettingsPage(app.diary) { goTo(PageDiary) }
+                        PageSettings -> SettingsPage(
+                            app.diary,
+                            onOpenDiary = { goTo(PageDiary) },
+                            onStartTutorial = { Coach.start(coachSteps()) },
+                            onOpenGuide = { showGuide = true },
+                        )
                     }
                 }
                 // ホーム・AR (3D の操作)・日記 (カレンダー端の日付)・リモコン (操作ボタン) は矢印と重なるので隠す (タブ/スワイプで移動)
@@ -170,6 +240,13 @@ fun AidyApp(app: AppState) {
         }
         }
         MarkerSheet(app.markerSheet)
+        if (showGuide) {
+            HowToGuide { openSettings ->
+                showGuide = false
+                scope.launch { pager.scrollToPage(if (openSettings) PageSettings else PageHome) }
+            }
+        }
+        CoachOverlay()
     }
 }
 
@@ -195,7 +272,7 @@ private fun Header(onSettings: () -> Unit) {
         }
         Box(Modifier.weight(1f))
         Box(
-            Modifier.size(44.dp).clickable(remember { MutableInteractionSource() }, null, onClick = onSettings),
+            Modifier.size(44.dp).coachTarget("gear").clickable(remember { MutableInteractionSource() }, null, onClick = onSettings),
             contentAlignment = Alignment.Center,
         ) { Icon(IconId.Gear, 24.dp, Theme.TextSub) }
     }
@@ -229,6 +306,7 @@ private fun TabBar(current: Int, onClick: (Int) -> Unit) {
                 Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                     Column(
                         Modifier
+                            .coachTarget("tab$i")
                             .pressable { onClick(i) }
                             .background(bg, RoundedCornerShape(16.dp))
                             .padding(horizontal = 10.dp, vertical = 6.dp),

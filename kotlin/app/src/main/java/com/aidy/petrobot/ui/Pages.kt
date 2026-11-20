@@ -68,6 +68,7 @@ class HomeUi(val room: HomeRoom) {
         room.onStatus = { stateText = it }
         room.onModelBadge = { ok, text -> toast.show(if (ok) AidyFace.Happy else AidyFace.Sleepy, text, if (ok) 2.8f else 0f) }
         room.onFaceReaction = { face, seconds -> mascot.react(face, seconds) }
+        room.onUserAction = { Coach.event(it) }
         room.reportModelState()
     }
 }
@@ -97,7 +98,7 @@ fun HomePage(ui: HomeUi, active: Boolean, onEdit: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Theme.Device)) {
         View3D(
             ui.room, active, ui.stateText, ui.mascot, null,
-            Modifier.fillMaxSize(),
+            Modifier.fillMaxSize().coachTarget("home3d"),
             bottomInset = if (ui.dressing) DressingSheetHeight.dp else 0.dp,
             toast = ui.toast,
             toastTop = 52.dp,
@@ -117,7 +118,7 @@ fun HomePage(ui: HomeUi, active: Boolean, onEdit: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 HomeRoundButton("お部屋を変える", HomeIconPaths.House, 56.dp, 24.dp) { showRooms = true }
-                HomeRoundButton("着せ替え", HomeIconPaths.Shirt, 56.dp, 24.dp) { setDressing(true) }
+                HomeRoundButton("着せ替え", HomeIconPaths.Shirt, 56.dp, 24.dp, Modifier.coachTarget("color")) { setDressing(true) }
             }
         }
 
@@ -154,7 +155,7 @@ fun RemotePage(visible: Boolean) {
 // ---------------------------------------------------------------- PAGE 4: 設定
 
 @Composable
-fun SettingsPage(diary: DiaryState, onOpenDiary: () -> Unit) {
+fun SettingsPage(diary: DiaryState, onOpenDiary: () -> Unit, onStartTutorial: () -> Unit, onOpenGuide: () -> Unit) {
     ScrollPage(Modifier.background(Theme.Device)) {
         SectionTitle("Aidy本体と接続", true)
         val linkLabel = if (!AidyDeviceLink.isConfigured) "未設定（下で合言葉を入れてね）" else AidyDeviceLink.targetLabel + " から日記を同期"
@@ -180,6 +181,15 @@ fun SettingsPage(diary: DiaryState, onOpenDiary: () -> Unit) {
 
         SectionTitle("今後の開発予定", false)
         FutureFeatureList()
+
+        // 使いかた: 紙芝居のガイドと、実際の画面で練習するチュートリアル (開発中はいつでも始められるよう、ここに置く)
+        SectionTitle("使いかた", false)
+        Card(IconId.Book, Theme.Primary, Theme.PrimaryLight, "使いかたガイド", "全部の画面の使いかたを読む", onClick = onOpenGuide) {
+            Icon(IconId.ChevronRight, 12.dp, Theme.Slate400)
+        }
+        Card(IconId.HandPointer, Theme.hex(0xca8a04), Theme.hex(0xfef9c3), "チュートリアル", "Aidyといっしょに、実際にさわって覚える", onClick = onStartTutorial) {
+            SmallButton("チュートリアルを開始", Theme.Primary, Color.White, onStartTutorial)
+        }
     }
 }
 
@@ -259,7 +269,7 @@ private fun DeviceLinkCard() {
     }
 
     Column(
-        Modifier.fillMaxWidth().box(Color.White, 16.dp, 1.dp, Theme.Slate100).padding(horizontal = 16.dp, vertical = 14.dp),
+        Modifier.fillMaxWidth().coachTarget("deviceLink").box(Color.White, 16.dp, 1.dp, Theme.Slate100).padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Label("つなぎ方", 11f, Theme.TextSub, true)
@@ -433,6 +443,7 @@ class ARPageUi(val editRoom: HomeRoom, val ar: ARController) {
         editRoom.onFaceReaction = { face, seconds -> editMascot.react(face, seconds) }
         editRoom.onFaceSelected = { tray.refresh() }
         editRoom.onModulesChanged = { tray.refresh() }
+        editRoom.onUserAction = { Coach.event(it) }
         ar.onPlaced = { text ->
             when {
                 text.contains("未配置") -> arToast.show(AidyFace.Normal, "床や机をタップして置いてね", 3f)
@@ -455,13 +466,13 @@ class ARPageUi(val editRoom: HomeRoom, val ar: ARController) {
 
 @Composable
 fun ARPage(ui: ARPageUi, active: Boolean, onMarkerButton: () -> Unit) {
-    Box(Modifier.fillMaxSize().background(Theme.Device)) {
+    Box(Modifier.fillMaxSize().background(Theme.Device).coachTarget("arEdit")) {
         if (ui.arMode) ARCameraMode(ui, onMarkerButton)
         else {
             // ---- 画面上: 3D プレビューで面をタップ → モジュールをドラッグ&ドロップで付け替え
             View3D(
                 ui.editRoom, active, ui.editStateText, ui.editMascot, "面をタップで選択 ・ ドラッグで回転 ・ ピンチでズーム",
-                Modifier.fillMaxSize(),
+                Modifier.fillMaxSize().coachTarget("ar3d"),
                 bottomInset = (TrayHeight + TrayMargin * 2f).dp,
                 topInset = SwitchSpace.dp,
                 tray = ui.tray,
@@ -483,6 +494,7 @@ fun ARPage(ui: ARPageUi, active: Boolean, onMarkerButton: () -> Unit) {
                 .align(Alignment.TopCenter)
                 .padding(top = 10.dp)
                 .size(220.dp, 38.dp)
+                .coachTarget("arSwitch")
                 .box(Color.White.copy(alpha = 0.95f), 19.dp, 5.dp, Theme.Border)
                 .padding(3.dp),
             horizontalArrangement = Arrangement.spacedBy(3.dp),

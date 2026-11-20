@@ -126,6 +126,8 @@ fun DressingOverlay(ui: HomeUi, onDone: () -> Unit) {
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                // チュートリアルの「色」の手順: 着せ替えを開いたら、このシート全体をさわれるようにする
+                .coachTarget("color")
                 .shadow(10.dp, SheetTop)
                 .background(Color.White, SheetTop)
                 .consumeTaps()
@@ -311,6 +313,7 @@ private fun ColorsTab(ui: HomeUi) {
 
     fun apply(p: ColorPattern) {
         BodyColor.pattern = p // 3D にすぐ映る (保存もされる)
+        Coach.event("colorSet") // チュートリアル「色を変えてみよう」
         ui.room.touched()
     }
 

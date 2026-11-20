@@ -33,9 +33,19 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aidy.petrobot.data.ModuleKind
 import com.aidy.petrobot.three.HomeRoom
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.IntOffset
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.random.Random
 
 /** 3D ビュー上のモジュールのドラッグ (つかんだモジュール, スロット, 指の位置 (ウィンドウ座標)) を受ける側。 */
 interface ModuleDragTarget {
@@ -57,7 +67,16 @@ class ViewPlacement {
 /** 3D ビューで本体の外を速く横にスワイプしたときのページ移動 (dir = +1 で次、-1 で前)。AidyApp が渡す。 */
 val LocalPageSwipe = staticCompositionLocalOf<((Int) -> Unit)?> { null }
 
-fun Modifier.roomTouch(room: HomeRoom, placement: ViewPlacement, tray: ModuleDragTarget?, onSwipe: ((Int) -> Unit)? = null) = this.pointerInput(room, onSwipe) {
+/**
+ * onRub: ホームで本体の上を指で左右にこすっている (なでなで) ときに、指の位置 (ビュー内の画素) を知らせる (ハートを出す用)。
+ */
+fun Modifier.roomTouch(
+    room: HomeRoom,
+    placement: ViewPlacement,
+    tray: ModuleDragTarget?,
+    onSwipe: ((Int) -> Unit)? = null,
+    onRub: ((Offset) -> Unit)? = null,
+) = this.pointerInput(room, onSwipe) {
     val holdMs = 600L
     val density = this.density
     awaitPointerEventScope {
@@ -82,6 +101,12 @@ fun Modifier.roomTouch(room: HomeRoom, placement: ViewPlacement, tray: ModuleDra
             val turn0 = room.saveTurn()
             val velocity = VelocityTracker()
             velocity.addPosition(first.uptimeMillis, pressPos)
+            // なでなで (ホームで本体の上から始めた指を、左右に細かく往復させる)
+            val canRub = !room.editable && room.isOverRobot(pressPos.x, pressPos.y)
+            var rubbing = false
+            var lastSign = 0
+            var stroke = 0f
+            var reversals = 0
 
             while (true) {
                 val remain = holdMs - (System.currentTimeMillis() - downTime)
@@ -126,7 +151,8 @@ fun Modifier.roomTouch(room: HomeRoom, placement: ViewPlacement, tray: ModuleDra
                     val total = (up - pressPos) / density
                     val swipe = offRobot && !draggingModule && !pinching && !held &&
                         abs(vx) > 700f && abs(total.x) > 40f && abs(total.x) > abs(total.y) * 1.5f
-                    if (swipe) {
+                    if (rubbing) room.holdEnd()
+                    else if (swipe) {
                         room.restoreTurn(turn0)
                         onSwipe?.invoke(if (vx < 0f) 1 else -1)
                     } else if (draggingModule) {
@@ -164,6 +190,27 @@ fun Modifier.roomTouch(room: HomeRoom, placement: ViewPlacement, tray: ModuleDra
                 val dx = delta.x / density
                 val dy = delta.y / density
                 moved += abs(dx) + abs(dy)
+
+                // 左右の往復を数える。2 回折り返したら (あまり遠くへ動かしていなければ) なでなで
+                if (canRub && abs(dx) > 0.3f) {
+                    val sign = if (dx > 0f) 1 else -1
+                    if (lastSign != 0 && sign != lastSign && stroke > 6f) {
+                        reversals++
+                        stroke = 0f
+                        if (rubbing) onRub?.invoke(c.position)
+                    }
+                    lastSign = sign
+                    stroke += abs(dx)
+                    val net = (c.position - pressPos) / density
+                    if (!rubbing && reversals >= 2 && abs(net.x) < 120f && abs(net.y) < 80f) {
+                        rubbing = true
+                        if (held) held = false
+                        room.restoreTurn(turn0) // こすっている間に回った分は戻す
+                        room.rubStart()
+                        onRub?.invoke(c.position)
+                    }
+                }
+                if (rubbing) continue
                 if (held && moved < 8f) continue
                 if (held) {
                     held = false
@@ -209,7 +256,10 @@ fun View3D(
             },
     ) {
         RoomScene(room, active, Modifier.fillMaxSize())
-        Box(Modifier.fillMaxSize().roomTouch(room, placement, tray, LocalPageSwipe.current))
+        val hearts = remember { HeartsState() }
+        Box(Modifier.fillMaxSize().roomTouch(room, placement, tray, LocalPageSwipe.current) { hearts.spawn(it) })
+        // なでなでしている指から、ハートがふわっと浮かぶ
+        FloatingHearts(hearts)
 
         // 操作ヒント (null なら出さない)
         if (hintText != null) Row(
@@ -245,6 +295,57 @@ fun View3D(
         }
 
         if (toast != null) AidyToast(toast, Modifier.align(Alignment.TopCenter).padding(top = toastTop))
+    }
+}
+
+// ---------------------------------------------------------------- なでなでのハート
+
+internal class Heart(val id: Long, val pos: Offset, val drift: Float, val size: Float)
+
+/** 浮かんでいるハート (位置はビュー内の画素)。 */
+class HeartsState {
+    internal val list = mutableStateListOf<Heart>()
+    private var next = 0L
+    private var lastAt = 0L
+
+    fun spawn(pos: Offset) {
+        val now = System.currentTimeMillis()
+        if (now - lastAt < 120) return // 出しすぎない
+        lastAt = now
+        list += Heart(next++, pos, Random.nextFloat() * 2f - 1f, 18f + Random.nextFloat() * 10f)
+        if (list.size > 12) list.removeAt(0)
+    }
+}
+
+@Composable
+private fun FloatingHearts(state: HeartsState) {
+    val d = LocalDensity.current
+    Box(Modifier.fillMaxSize()) {
+        for (h in state.list) {
+            key(h.id) {
+                val t = remember { Animatable(0f) }
+                LaunchedEffect(Unit) {
+                    t.animateTo(1f, tween(1100, easing = LinearOutSlowInEasing))
+                    state.list.remove(h)
+                }
+                val p = t.value
+                val sizePx = with(d) { h.size.dp.toPx() }
+                // 上へ 90dp ふわっと。左右にゆれながら、最初にぽよんと大きくなって消える
+                val x = h.pos.x - sizePx / 2f + with(d) { (h.drift * 24f * p + sin(p * 9f) * 5f).dp.toPx() }
+                val y = h.pos.y - sizePx / 2f - with(d) { (90f * p).dp.toPx() }
+                val scale = if (p < 0.2f) 0.4f + p / 0.2f * 0.8f else 1.2f - (p - 0.2f) * 0.3f
+                Box(
+                    Modifier
+                        .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
+                        .size(h.size.dp)
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            alpha = if (p < 0.6f) 1f else 1f - (p - 0.6f) / 0.4f
+                        },
+                ) { Icon(IconId.Heart, h.size.dp, Theme.hex(0xf43f5e)) }
+            }
+        }
     }
 }
 
