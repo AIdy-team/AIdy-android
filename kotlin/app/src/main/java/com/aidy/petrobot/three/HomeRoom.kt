@@ -532,7 +532,7 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
         val was = reaction
         reaction = Reaction.None
         body.s = V3.One
-        showFaceOverlay(null)
+        showFaceOverlay(bodyFace?.let { bodyToApp(it) }, bodyFace)
         stars.isVisible = false
         zzz.isVisible = false
         rig.wagTails(0f)
@@ -548,6 +548,25 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
         }
         if (aiEnabled && was != Reaction.Dizzy && selectedFace == null) chooseNextAIState()
         else aiTimer = 1.5f
+    }
+
+    /** 本体から届いた表情 (faces.py の名前)。null = 本体の指定なし。動きの反応が終わるとこの顔に戻る。 */
+    var bodyFace: String? = null
+        private set
+
+    /** 本体の表情をアプリの 3D の顔にも出す (BodyBridge の face)。 */
+    fun setBodyFace(name: String?) {
+        bodyFace = name?.ifEmpty { null }?.takeIf { it != "normal" }
+        if (reaction == Reaction.None) showFaceOverlay(bodyFace?.let { bodyToApp(it) }, bodyFace)
+        if (name != null) onFaceReaction(bodyToApp(name), 1.5f)
+    }
+
+    private fun bodyToApp(name: String): AidyFace = when (name) {
+        "happy", "love", "laugh", "smug", "wink" -> AidyFace.Happy
+        "sleepy", "sleep" -> AidyFace.Sleepy
+        "dazed", "dizzy", "hot" -> AidyFace.Dizzy
+        "surprised", "scared", "fall", "cold", "doubletake" -> AidyFace.Surprised
+        else -> AidyFace.Normal
     }
 
     /**

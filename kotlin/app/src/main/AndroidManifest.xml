@@ -20,8 +20,10 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
 
-    <!-- 設定で「スマホのカレンダーと結合」を ON にしたときだけ求める (読むだけ) -->
+    <!-- 設定で「スマホのカレンダーと結合」を ON にしたときだけ求める (読む・書く) -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- このアプリで足した予定をスマホのカレンダーにも入れる -->
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />

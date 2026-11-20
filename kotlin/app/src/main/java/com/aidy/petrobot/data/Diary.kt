@@ -271,14 +271,14 @@ object AidyDeviceLink {
     // ------------------------------------------------------------------ 通り道 (Bluetooth / Wi-Fi)
 
     /** 返事。code は HTTP と同じ意味 (200・401・404…)、body は本文 (JSON 文字列)。 */
-    private class Resp(val code: Int, val body: String) {
+    internal class Resp(val code: Int, val body: String) {
         fun json(): JSONObject = JSONObject(body)
         /** 非200 のときに本体が返す {"error": "..."}。 */
         fun error(): String? = runCatching { JSONObject(body).optString("error").ifEmpty { null } }.getOrNull()
     }
 
     /** 1 回の問い合わせ。つながらないときは IOException (BleLink.BleException を含む)。 */
-    private suspend fun call(method: String, path: String, body: JSONObject? = null): Resp =
+    internal suspend fun call(method: String, path: String, body: JSONObject? = null): Resp =
         when (mode) {
             Mode.Bluetooth -> BleLink.request(bleName, method, path, token, body).let { Resp(it.first, it.second) }
             Mode.Wifi -> withContext(Dispatchers.IO) { httpCall(method, path, body) }
@@ -307,7 +307,7 @@ object AidyDeviceLink {
     }
 
     /** 接続エラー・401・403 の言い回しをアプリ全体でそろえる。e があれば原因 (時間切れ・名前が引けない等) も添える。 */
-    private fun errorMessage(code: Int?, e: Exception? = null) = when {
+    internal fun errorMessage(code: Int?, e: Exception? = null) = when {
         code == 401 || code == 403 -> "合言葉が違います。本体のQRを読み直してください"
         code != null -> "本体でエラーが起きました ($code)"
         e is BleLink.BleException -> e.message ?: "Bluetooth で本体につながりません"
@@ -626,6 +626,10 @@ data class ScheduleItem(
     val source: String = "",
     /** source = "phone" のときのカレンダー名 (「仕事」「Google」など)。 */
     val calendar: String = "",
+    /** source = "phone" の予定の、スマホ側の番号 (Events._ID)。 */
+    val phoneEventId: Long = 0,
+    /** このアプリの予定をスマホのカレンダーにも書いたとき: カレンダーの番号 → そこに書いた予定の番号。 */
+    val phoneLinks: Map<Long, Long> = emptyMap(),
 ) {
     val allDay get() = time.isEmpty()
     val fromPhone get() = source == "phone"
@@ -635,9 +639,20 @@ data class ScheduleItem(
         !allDay && "$date $time" < now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
 
     fun toJson(): JSONObject = JSONObject().put("id", id).put("date", date).put("time", time).put("title", title).put("memo", memo)
+        .apply {
+            if (phoneLinks.isNotEmpty()) put("phoneLinks", JSONObject().also { o -> phoneLinks.forEach { (c, e) -> o.put(c.toString(), e) } })
+        }
 
     companion object {
-        fun fromJson(o: JSONObject) = ScheduleItem(o.optString("id"), o.optString("date"), o.optString("time"), o.optString("title"), o.optString("memo"))
+        fun fromJson(o: JSONObject) = ScheduleItem(
+            o.optString("id"), o.optString("date"), o.optString("time"), o.optString("title"), o.optString("memo"),
+            phoneLinks = buildMap {
+                o.optJSONObject("phoneLinks")?.let { l -> l.keys().forEach { k -> put(k.toLong(), l.optLong(k)) } }
+                // 古い形 (phoneEventId だけ): どのカレンダーか分からないので 0 として持ち、次に書くときに調べ直す
+                val legacy = o.optLong("phoneEventId", 0)
+                if (isEmpty() && legacy != 0L) put(0L, legacy)
+            },
+        )
     }
 }
 
@@ -668,7 +683,11 @@ object ScheduleStore {
     fun forDateMerged(d: LocalDate, phone: List<ScheduleItem>): List<ScheduleItem> {
         if (phone.isEmpty()) return forDate(d)
         val now = LocalDateTime.now()
-        return (forDate(d) + phone).sortedWith { a, b ->
+        // このアプリの予定がスマホ経由でもう一度出てこないように、番号か「日付・時刻・タイトルが同じ」で除く
+        val linked = linkedEventIds()
+        val mine = forDate(d).map { Triple(it.date, it.time, it.title) }.toSet()
+        val others = phone.filter { p -> p.phoneEventId !in linked && Triple(p.date, p.time, p.title) !in mine }
+        return (forDate(d) + others).sortedWith { a, b ->
             val pa = a.isPast(now)
             val pb = b.isPast(now)
             when {
@@ -679,41 +698,40 @@ object ScheduleStore {
         }
     }
 
-    /**
-     * 読み込んだ予定を混ぜる。同じ id は上書き、id が違っても日付・時刻・タイトルが同じものは重複として飛ばす。
-     * 返り値 = (追加した数, 上書きした数, 飛ばした数)。
-     */
-    fun importItems(src: List<ScheduleItem>): Triple<Int, Int, Int> {
-        val list = load()
-        var added = 0
-        var updated = 0
-        var skipped = 0
-        for (it0 in src) {
-            if (it0.date.isEmpty() || it0.title.isEmpty() || it0.fromPhone) { skipped++; continue }
-            val it = it0.copy(source = "", calendar = "")
-            val idx = if (it.id.isEmpty()) -1 else list.indexOfFirst { e -> e.id == it.id }
-            when {
-                idx >= 0 -> { if (list[idx] != it) { list[idx] = it; updated++ } else skipped++ }
-                list.any { e -> e.date == it.date && e.time == it.time && e.title == it.title } -> skipped++
-                else -> { list += if (it.id.isEmpty()) it.copy(id = UUID.randomUUID().toString().replace("-", "")) else it; added++ }
-            }
-        }
-        if (added + updated > 0) write()
-        return Triple(added, updated, skipped)
-    }
-
     /** id が空なら新規追加、既存 id なら上書き。 */
-    fun save(item0: ScheduleItem) {
+    fun save(item0: ScheduleItem): ScheduleItem {
+        BodyBridge.markRemindersDirty()
         val list = load()
         val item = if (item0.id.isEmpty()) item0.copy(id = UUID.randomUUID().toString().replace("-", "")) else item0
         val idx = list.indexOfFirst { it.id == item.id }
         if (idx >= 0) list[idx] = item else list += item
         write()
+        return item
     }
 
-    fun delete(id: String) {
-        if (load().removeAll { it.id == id }) write()
+    /** 消した予定 (無ければ null)。スマホのカレンダーからも消すのに使う。 */
+    fun delete(id: String): ScheduleItem? {
+        BodyBridge.markRemindersDirty()
+        val list = load()
+        val old = list.firstOrNull { it.id == id } ?: return null
+        list.remove(old)
+        write()
+        return old
     }
+
+    fun get(id: String): ScheduleItem? = load().firstOrNull { it.id == id }
+
+    /** スマホのカレンダーに書いた先を覚える (内容は変えない)。 */
+    fun setPhoneLinks(id: String, links: Map<Long, Long>) {
+        val list = load()
+        val idx = list.indexOfFirst { it.id == id }
+        if (idx < 0 || list[idx].phoneLinks == links) return
+        list[idx] = list[idx].copy(phoneLinks = links)
+        write()
+    }
+
+    /** スマホのカレンダーに書いた予定の番号 (結合表示で二重に出さないため)。 */
+    fun linkedEventIds(): Set<Long> = load().flatMap { it.phoneLinks.values }.toSet()
 
     /** "9:5" "0930" "9" などを "HH:mm" に揃える。空なら ""(終日)、読めなければ null。 */
     fun parseTime(s0: String?): String? {

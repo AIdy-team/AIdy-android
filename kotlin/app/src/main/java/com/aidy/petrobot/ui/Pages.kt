@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -31,10 +32,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.aidy.petrobot.data.AidyDeviceLink
 import com.aidy.petrobot.data.BleLink
-import com.aidy.petrobot.data.CalendarBackup
 import com.aidy.petrobot.data.PhoneCalendar
-import android.Manifest
 import com.aidy.petrobot.data.BodyColor
+import com.aidy.petrobot.data.BodyBridge
 import com.aidy.petrobot.data.CalendarSettings
 import com.aidy.petrobot.data.ModuleCatalog
 import com.aidy.petrobot.data.ModuleConfig
@@ -127,15 +127,37 @@ fun HomePage(ui: HomeUi, active: Boolean, onEdit: () -> Unit) {
             }
         }
 
-        if (ui.dressing) ModuleDragGhost(tray) // ドラッグ中のパーツ (指の少し上)
+        if (ui.dressing) {
+            ModuleDragGhost(tray) // ドラッグ中のパーツ (指の少し上)
+        } else {
+            // Aidy の吹き出し (本体からの返事)。3D の Aidy の頭の上あたり
+            AidyBubble(Modifier.align(Alignment.TopCenter).padding(top = 56.dp, start = 24.dp, end = 24.dp))
+
+            // 会話欄 (文字・スマホのマイク)。いちばん下。右下の丸ボタンはその上
+            HomeChatBar(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(start = 12.dp, end = 12.dp, bottom = ChatMargin.dp)
+                    .fillMaxWidth()
+                    .coachTarget("chat"),
+            )
+        }
         CurtainOverlay(ui.curtain)
+    }
+
+    // 本体の表情を 3D の顔に / モジュールの抜き差しを一言
+    LaunchedEffect(BodyBridge.faceVersion) { if (BodyBridge.faceVersion > 0) ui.room.setBodyFace(BodyBridge.face) }
+    LaunchedEffect(BodyBridge.moduleNoteVersion) {
+        val n = BodyBridge.moduleNote
+        if (BodyBridge.moduleNoteVersion > 0 && n != null) ui.toast.show(AidyFace.Surprised, n, 3f)
     }
     if (showRooms) RoomPickerSheet(ui.room) { showRooms = false }
 }
 
-/** 右下の丸ボタンの位置 (dp)。高さは 56 + 12 + 56。 */
+/** 会話欄 (高さ 56) の下の余白と、右下の丸ボタンの位置 (dp)。丸ボタンは会話欄の上、高さは 56 + 12 + 56。 */
+private const val ChatMargin = 12f
 private const val HomeButtonsEnd = 12f
-private const val HomeButtonsBottom = 16f
+private const val HomeButtonsBottom = ChatMargin + 56f + 12f
 private const val HomeButtonsHeight = 124f
 
 // ---------------------------------------------------------------- PAGE 2: リモコン・モジュール
@@ -151,6 +173,9 @@ fun RemotePage(visible: Boolean) {
         Card(IconId.Book, Theme.hex(0x8b5cf6), Theme.hex(0xf3e8ff), "辞書 (よくある質問・聞き間違い・読み)", "本体の返事をカスタマイズする", onClick = { showDictManager = true }) {
             Icon(IconId.ChevronRight, 12.dp, Theme.Slate400)
         }
+
+        SectionTitle("本体のモジュール (差し込み口)", false)
+        BodyPortsCard(visible)
 
         SectionTitle("拡張モジュール (追加3Dモデル連携)", false)
         Card(IconId.Video, Theme.hex(0x8b5cf6), Theme.hex(0xf3e8ff), "カメラフィードモジュール", "拡張OBJモデル接続可能") { Icon(IconId.Plus, 16.dp, Theme.Primary) }
@@ -171,6 +196,10 @@ fun SettingsPage(diary: DiaryState, onOpenDiary: () -> Unit, onStartTutorial: ()
         DeviceLinkCard()
         Label("音量・話す速さ・辞書はリモコンのページにあります", 11f, Theme.TextSub, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
 
+        SectionTitle("Aidyと人", false)
+        AidyNameCard()
+        FacePeopleCard()
+
         SectionTitle("ロボット設定", false)
         Card(null, Color.Unspecified, Color.Unspecified, "アセンブリ構造", "本体v2_モデル.obj (透明化防止完全対応)") { Icon(IconId.Check, 14.dp, Theme.Green) }
 
@@ -179,7 +208,7 @@ fun SettingsPage(diary: DiaryState, onOpenDiary: () -> Unit, onStartTutorial: ()
             AidySwitch(diary.weekView, { on -> diary.applyWeekView(on) })
         }
         PhoneCalendarCard(diary)
-        CalendarBackupCard(diary)
+        if (diary.phoneVersion >= 0 && PhoneCalendar.active) PhoneCalendarList(diary)
 
         SectionTitle("操作 & ネットワーク", false)
         Card(null, Color.Unspecified, Color.Unspecified, "モジュール自動合体", "パーツSocketアタッチ機能 (ON)") { AidySwitch(true) }
@@ -312,11 +341,16 @@ private fun DeviceLinkCard() {
  */
 @Composable
 private fun PhoneCalendarCard(diary: DiaryState) {
+    val scope = rememberCoroutineScope()
     var on by remember { mutableStateOf(PhoneCalendar.active) }
     var note by remember {
         mutableStateOf(
-            if (PhoneCalendar.switchOn && !PhoneCalendar.hasPermission()) "カレンダーの許可が取り消されたので結合していません"
-            else "Googleカレンダーなど、スマホのカレンダーの予定を緑で表示します (読むだけ)"
+            when {
+                PhoneCalendar.switchOn && !PhoneCalendar.hasPermission() -> "カレンダーの許可が取り消されたので結合していません"
+                PhoneCalendar.active && !PhoneCalendar.canWrite() -> "スマホの予定を表示中 (書く許可がないので、このアプリの予定はスマホに入りません)"
+                PhoneCalendar.active -> "スマホのカレンダーと予定をやりとりしています"
+                else -> "Googleカレンダーなどスマホのカレンダーと予定を共有します (スマホの予定は緑で表示)"
+            }
         )
     }
 
@@ -324,15 +358,26 @@ private fun PhoneCalendarCard(diary: DiaryState) {
         PhoneCalendar.switchOn = v
         on = PhoneCalendar.active
         diary.phoneVersion++
+        if (on) scope.launch {
+            val n = PhoneCalendar.pushAll()
+            if (n > 0) { diary.version++; note = "スマホのカレンダーと予定をやりとりしています (このアプリの予定を${n}件スマホに入れました)" }
+        }
     }
 
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) {
-            apply(true)
-            note = "スマホのカレンダーの予定を一緒に表示しています"
-        } else {
-            apply(false)
-            note = "カレンダーの許可がないので結合できません (スマホの設定 > アプリ > 権限 で許可できます)"
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        when {
+            !PhoneCalendar.hasPermission() -> {
+                apply(false)
+                note = "カレンダーの許可がないので結合できません (スマホの設定 > アプリ > 権限 で許可できます)"
+            }
+            !PhoneCalendar.canWrite() -> {
+                apply(true)
+                note = "スマホの予定を表示中 (書く許可がないので、このアプリの予定はスマホに入りません)"
+            }
+            else -> {
+                note = "スマホのカレンダーと予定をやりとりしています"
+                apply(true)
+            }
         }
     }
 
@@ -340,61 +385,81 @@ private fun PhoneCalendarCard(diary: DiaryState) {
         AidySwitch(on, { v ->
             if (!v) {
                 apply(false)
-                note = "結合をやめました (スマホのカレンダーの予定は表示しません)"
-            } else if (PhoneCalendar.hasPermission()) {
+                note = "結合をやめました (スマホに入れた予定はそのまま残ります)"
+            } else if (PhoneCalendar.hasPermission() && PhoneCalendar.canWrite()) {
+                note = "スマホのカレンダーと予定をやりとりしています"
                 apply(true)
-                note = "スマホのカレンダーの予定を一緒に表示しています"
             } else {
-                launcher.launch(Manifest.permission.READ_CALENDAR)
+                launcher.launch(PhoneCalendar.Permissions)
             }
         })
     }
 }
 
-// ---------------------------------------------------------------- 設定: カレンダーの書き出し・読み込み
-
-/** このアプリの予定と日記を JSON ファイルに書き出す / 読み込んで混ぜる。保存先・読み込み元は Android のファイル選択で選ぶ。 */
+/**
+ * スマホに入っているカレンダーの一覧。カレンダーごとに
+ *   「表示」= その予定をこのアプリのカレンダーに出すか
+ *   「予定を入れる」= このアプリで足した予定をそこにも書くか (いくつでも選べる)
+ */
 @Composable
-private fun CalendarBackupCard(diary: DiaryState) {
+private fun PhoneCalendarList(diary: DiaryState) {
     val scope = rememberCoroutineScope()
-    var status by remember { mutableStateOf("予定と日記をファイルに保存・復元できます (スマホのカレンダーの予定は含みません)") }
-    var statusColor by remember { mutableStateOf(Theme.TextSub) }
-    var busy by remember { mutableStateOf(false) }
+    var cals by remember { mutableStateOf<List<PhoneCalendar.Cal>>(emptyList()) }
+    var targets by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var shown by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var note by remember { mutableStateOf("") }
 
-    fun show(r: CalendarBackup.Result) {
-        busy = false
-        status = r.message
-        statusColor = if (r.ok) Theme.Green else Theme.hex(0xef4444)
-        if (r.ok) diary.version++
+    fun refresh() {
+        scope.launch {
+            cals = PhoneCalendar.calendars()
+            targets = PhoneCalendar.writeTargets(cals)
+            shown = cals.filter { PhoneCalendar.isShown(it.id) }.map { it.id }.toSet()
+        }
     }
-
-    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(CalendarBackup.MimeType)) { uri ->
-        if (uri == null) { busy = false; return@rememberLauncherForActivityResult }
-        scope.launch { show(CalendarBackup.export(uri)) }
-    }
-    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null) { busy = false; return@rememberLauncherForActivityResult }
-        scope.launch { show(CalendarBackup.import(uri)) }
-    }
+    LaunchedEffect(diary.phoneVersion) { refresh() }
 
     Column(
         Modifier.fillMaxWidth().box(Color.White, 16.dp, 1.dp, Theme.Slate100).padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Label("カレンダーの書き出し・読み込み", 14f, Theme.TextMain, true)
-        Label(status, 12f, statusColor)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SmallButton("書き出す", Theme.Primary, Color.White) {
-                if (busy) return@SmallButton
-                busy = true
-                exportLauncher.launch(CalendarBackup.defaultFileName())
-            }
-            SmallButton("読み込む", Theme.Slate100, Theme.Slate600) {
-                if (busy) return@SmallButton
-                busy = true
-                importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
+        Label("つなぐカレンダー", 14f, Theme.TextMain, true)
+        Label("「表示」はこのアプリに出すカレンダー、「入れる」はこのアプリで足した予定を書きこむカレンダーです (いくつでも選べます)", 11f, Theme.TextSub)
+        if (cals.isEmpty()) Label("スマホにカレンダーが見つかりません", 12f, Theme.Slate400)
+        for (c in cals) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.size(12.dp).background(Color(c.color or 0xFF000000.toInt()), RoundedCornerShape(6.dp)))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Label(c.label, 13f, Theme.TextMain, true, maxLines = 1)
+                    Label(c.kind + (if (!c.writable) " ・ 見るだけ" else ""), 10f, Theme.TextSub, maxLines = 1)
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Label("表示", 9f, Theme.Slate400)
+                    AidySwitch(c.id in shown, { v ->
+                        PhoneCalendar.setShown(c.id, v)
+                        shown = if (v) shown + c.id else shown - c.id
+                        diary.phoneVersion++
+                    }, 0.8f)
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Label("入れる", 9f, if (c.writable) Theme.Slate400 else Theme.Slate300)
+                    if (c.writable) {
+                        AidySwitch(c.id in targets, { v ->
+                            PhoneCalendar.setWriteTarget(cals, c.id, v)
+                            targets = PhoneCalendar.writeTargets(cals)
+                            if (v) scope.launch {
+                                val n = PhoneCalendar.pushAll()
+                                if (n > 0) { diary.version++; note = "「${c.label}」に予定を${n}件入れました" }
+                            }
+                            diary.phoneVersion++
+                        }, 0.8f)
+                    } else {
+                        Box(Modifier.size(width = 40.dp, height = 24.dp))
+                    }
+                }
             }
         }
+        if (note.isNotEmpty()) Label(note, 11f, Theme.Green, true)
+        Label("Google のカレンダーは、スマホの同期のあとに反映されます (数秒〜数分)。", 10f, Theme.Slate400)
     }
     Spacer(Modifier.height(10.dp))
 }
@@ -588,3 +653,50 @@ private fun ARButton(icon: IconId, text: String, primary: Boolean, modifier: Mod
     }
 }
 
+
+/** 本体の差し込み口 (GET /api/ports) の様子。抜き差しの知らせが来たら自動で読み直す。 */
+@Composable
+private fun BodyPortsCard(visible: Boolean) {
+    val scope = rememberCoroutineScope()
+    var note by remember { mutableStateOf("") }
+    fun refresh() {
+        if (!AidyDeviceLink.isConfigured) { note = "本体とつながっていません"; return }
+        scope.launch {
+            note = try { BodyBridge.fetchPorts(); "" } catch (e: Exception) { "読み込めませんでした" }
+        }
+    }
+    LaunchedEffect(visible) { if (visible) refresh() }
+    val p = BodyBridge.ports
+    Column(
+        Modifier.fillMaxWidth().box(Color.White, 16.dp, 1.dp, Theme.Slate100).padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(IconId.Plug, 14.dp, Theme.Primary)
+            Label("つながっているモジュール", 14f, Theme.TextMain, true, Modifier.weight(1f).padding(start = 8.dp))
+            SmallButton("読み直す", Theme.Slate100, Theme.Slate600) { refresh() }
+        }
+        when {
+            p == null -> Label(note.ifEmpty { "まだ読み込んでいません" }, 12f, Theme.Slate400)
+            !p.ok && p.ports.isEmpty() -> Label("本体が差し込み口を読めていません", 12f, Theme.Slate400)
+            p.ports.isEmpty() -> Label("何もつながっていません", 12f, Theme.TextSub)
+            else -> for (m in p.ports) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Label(m.place, 11f, Theme.Slate400, true, Modifier.size(width = 44.dp, height = 18.dp))
+                    Label(m.name.ifEmpty { m.kind.ifEmpty { "モジュール" } }, 13f, Theme.TextMain, true, Modifier.weight(1f), maxLines = 1)
+                    val (txt, col) = when (m.state) {
+                        "ok" -> "使える" to Theme.Green
+                        "unknown" -> "知らない" to Theme.Slate400
+                        "power" -> "電気不足" to Theme.hex(0xf59e0b)
+                        "short", "error" -> "異常" to Theme.hex(0xef4444)
+                        else -> m.state.ifEmpty { "?" } to Theme.Slate400
+                    }
+                    Label(txt, 11f, col, true)
+                }
+            }
+        }
+        if (p != null) Label("電気 %.1f / %.0f W".format(p.watts, p.budget), 10f, Theme.Slate400)
+        if (note.isNotEmpty() && p != null) Label(note, 10f, Theme.Slate400)
+    }
+    Spacer(Modifier.height(10.dp))
+}
