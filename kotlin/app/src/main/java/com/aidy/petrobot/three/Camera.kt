@@ -13,6 +13,10 @@ import kotlin.math.tan
 class AidyCamera(engine: Engine) : CameraNode(engine) {
     /** 縦横比 → 縦の画角 (度)。 */
     var fov: (Float) -> Float = { 45f }
+        set(v) {
+            field = v
+            updateProjection()
+        }
     /** 写る範囲を上下にずらす量 (NDC。正で絵が上へ動く)。 */
     var shiftY = 0f
         set(v) {
@@ -47,7 +51,15 @@ class AidyCamera(engine: Engine) : CameraNode(engine) {
         if (view == null) return
         val a = width.toDouble() / height
         setProjection(fov(a.toFloat()).toDouble(), a, nearPlane.toDouble(), farPlane.toDouble(), Camera.Fov.VERTICAL)
-        setShift(0.0, shiftY.toDouble())
+        applyShift()
+    }
+
+    /**
+     * Filament の setShift は渡した値の 2 倍ずらす (内部で ×2 している) ので半分にして渡す。
+     * こうすると描画と ray / worldToScreen (タップ・吹き出しの位置) が一致する。
+     */
+    private fun applyShift() {
+        if (view != null) setShift(0.0, shiftY / 2.0)
     }
 
     fun lookAt(eye: V3, target: V3) {
@@ -88,6 +100,15 @@ class AidyCamera(engine: Engine) : CameraNode(engine) {
 
     companion object {
         /** 縦の画角 45° は横幅 0.7 (縦長のカード) を想定。それより細長い画面では横が見切れないよう広げる。 */
+        /**
+         * 着せ替え (試着室) の画角: デザイン「試着室（全体）」のカメラ (幅 390px・焦点距離 480px → 横の画角 約 44°) に合わせ、
+         * 横の画角を固定して縦は画面の縦横比から決める。
+         */
+        fun stageFov(aspect: Float): Float {
+            val halfTanX = 195f / 480f
+            return 2f * atan(halfTanX / aspect.coerceAtLeast(0.1f)) * Rad2Deg
+        }
+
         fun homeFov(aspect: Float): Float {
             val designAspect = 0.7f
             val designFov = 45f

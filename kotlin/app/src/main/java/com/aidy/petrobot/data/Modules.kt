@@ -58,7 +58,7 @@ object ModuleCatalog {
     fun fits(k: ModuleKind, s: BodySlot): Boolean = when (k) {
         ModuleKind.Face -> s.isMonitor
         ModuleKind.Ear -> !s.isMonitor && (s.face == "top" || s.face == "left" || s.face == "right")
-        ModuleKind.Tail45, ModuleKind.TailCurl -> !s.isMonitor && (s.face == "back" || s.face == "top")
+        ModuleKind.Tail45, ModuleKind.TailCurl -> !s.isMonitor && s.face == "back" // 尻尾は背面だけ (上面には付けない)
         ModuleKind.Hat -> s.id == "top_2" // つばが 80mm あるので上面の真ん中だけ
         ModuleKind.Tv -> s.id == "top_2" // 82x68mm あるので上面の真ん中だけ
         ModuleKind.Legs -> !s.isMonitor && s.face == "bottom"
@@ -319,7 +319,9 @@ object ModuleConfig {
             val kv = pair.split(':')
             if (kv.size != 2) continue
             val k = ModuleKind.entries.firstOrNull { it.name == kv[1] } ?: continue
-            if (BodyLayout.get(kv[0]) != null) map[kv[0]] = k
+            // 付けられない場所の保存 (例: 以前は付けられた上面の尻尾) は読み飛ばす
+            val slot = BodyLayout.get(kv[0]) ?: continue
+            if (ModuleCatalog.fits(k, slot)) map[kv[0]] = k
         }
         return map
     }

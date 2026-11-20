@@ -57,7 +57,7 @@ import com.aidy.petrobot.three.ModelLoader
 import kotlinx.coroutines.launch
 
 private const val HeaderHeight = 50f
-private const val DotsHeight = 24f
+
 private const val TabBarHeight = 64f
 
 private const val PageHome = 0
@@ -116,6 +116,10 @@ fun AidyApp(app: AppState) {
     val diaryVisible by remember { derivedStateOf { pager.isVisible(PageDiary) } }
     val arVisible by remember { derivedStateOf { pager.isVisible(PageAR) } }
     val current = pager.currentPage
+    // 着せ替え中 (ホームのページが着せ替え画面)。下のタブはそのまま出し、ほかのページから戻っても着せ替えのまま
+    val dressing = app.home?.dressing == true
+    // 着せ替え画面を見ている間だけ横スワイプのページ移動を止める (3D を回す操作とぶつかるため。タブでは移動できる)
+    val dressingShown = dressing && current == PageHome
 
     // ページ切替 (OnPageChanged)。AR ページは読み込み後にできるので、できたときにも合わせる
     val arUi = app.ar
@@ -136,12 +140,12 @@ fun AidyApp(app: AppState) {
 
     Box(Modifier.fillMaxSize().background(Color.White)) {
         // 3D ビューで本体の外を速くスワイプしたらページを移る (dir = +1 で次、-1 で前)
-        CompositionLocalProvider(LocalPageSwipe provides { dir: Int -> goTo((pager.currentPage + dir).coerceIn(0, PageCount - 1)) }) {
+        CompositionLocalProvider(LocalPageSwipe provides (if (dressingShown) null else ({ dir: Int -> goTo((pager.currentPage + dir).coerceIn(0, PageCount - 1)) })))  {
         Column(Modifier.fillMaxSize().background(Theme.Device).statusBarsPadding()) {
             Header { goTo(PageSettings) }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 // 全ページを作ったままにする (ページの使い回しで 3D ビュー (SurfaceView) の Filament の View が壊れるのを防ぐ)
-                HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = PageCount, key = { it }) { page ->
+                HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = PageCount, key = { it }, userScrollEnabled = !dressingShown) { page ->
                     when (page) {
                         PageHome -> app.home?.let { home ->
                             HomePage(home, homeVisible) {
@@ -160,7 +164,8 @@ fun AidyApp(app: AppState) {
                 NavArrow(IconId.ChevronLeft, current != 0, hide, Modifier.align(Alignment.CenterStart).padding(start = 10.dp)) { goTo(current - 1) }
                 NavArrow(IconId.ChevronRight, current != PageCount - 1, hide, Modifier.align(Alignment.CenterEnd).padding(end = 10.dp)) { goTo(current + 1) }
             }
-            Dots(current) { goTo(it) }
+
+
             TabBar(current) { goTo(it) }
         }
         }
@@ -210,25 +215,6 @@ private fun NavArrow(icon: IconId, enabled0: Boolean, hidden: Boolean, modifier:
     ) { Icon(icon, 16.dp, Theme.Slate600) }
 }
 
-@Composable
-private fun Dots(current: Int, onClick: (Int) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().height(DotsHeight.dp).background(Theme.Device),
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        for (i in TabLabels.indices) {
-            val t by animateFloatAsState(if (i == current) 1f else 0f, tween(300, easing = EaseCss), label = "dot")
-            Box(
-                Modifier
-                    .width((8f + 16f * t).dp)
-                    .height(8.dp)
-                    .background(lerp(Theme.Slate300, Theme.Primary, t), RoundedCornerShape(4.dp))
-                    .clickable(remember { MutableInteractionSource() }, null) { onClick(i) },
-            )
-        }
-    }
-}
 
 @Composable
 private fun TabBar(current: Int, onClick: (Int) -> Unit) {

@@ -277,6 +277,28 @@ object Meshes {
         return b.build()
     }
 
+    /** 球 (半径 r、中心原点)。 */
+    fun sphere(r: Float, seg: Int = 20, rings: Int = 14): MeshData {
+        val b = B()
+        for (i in 0..rings) {
+            val phi = PI * i / rings
+            for (j in 0..seg) {
+                val th = 2f * PI * j / seg
+                val x = sin(phi) * cos(th)
+                val y = cos(phi)
+                val z = sin(phi) * sin(th)
+                b.v(x * r, y * r, z * r, x, y, z, j.toFloat() / seg, i.toFloat() / rings)
+            }
+        }
+        for (i in 0 until rings) for (j in 0 until seg) {
+            val a = i * (seg + 1) + j
+            val c = a + seg + 1
+            b.t(a, a + 1, c)
+            b.t(a + 1, c + 1, c)
+        }
+        return b.build()
+    }
+
     /** 立方体 (一辺 1、中心原点)。 */
     fun cube(): MeshData {
         val b = B()

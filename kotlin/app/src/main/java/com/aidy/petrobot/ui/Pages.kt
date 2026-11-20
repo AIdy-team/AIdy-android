@@ -41,11 +41,11 @@ import com.aidy.petrobot.data.ModuleConfig
 import com.aidy.petrobot.data.ModuleKind
 import com.aidy.petrobot.three.HomeRoom
 import kotlinx.coroutines.launch
+import androidx.activity.compose.BackHandler
+import com.aidy.petrobot.data.RoomPref
+import com.aidy.petrobot.three.RoomDecor
 
 // ---------------------------------------------------------------- PAGE 0: ホーム (3D ペットルーム)
-
-private const val SummaryHeight = 58f
-private const val SummaryMargin = 12f
 
 /** いまのモジュールの一覧 (耳×2・尻尾…)。 */
 fun moduleSummaryText(slots: Map<String, ModuleKind>): String {
@@ -55,11 +55,14 @@ fun moduleSummaryText(slots: Map<String, ModuleKind>): String {
     return if (parts.isNotEmpty()) parts.joinToString("・") else "なし (本体だけ)"
 }
 
-/** ホーム画面の 3D ルームの状態 (吹き出しの文字・マスコット・お知らせ)。 */
+/** ホーム画面の 3D ルームの状態 (吹き出しの文字・マスコット・お知らせ・着せ替え中か)。 */
 class HomeUi(val room: HomeRoom) {
     var stateText by mutableStateOf("こんにちは！")
     val mascot = MascotState()
     val toast = ToastState()
+    /** 着せ替え画面 (きせかえルーム) を開いている。下のタブを隠す。 */
+    var dressing by mutableStateOf(false)
+    val curtain = CurtainState()
 
     init {
         room.onStatus = { stateText = it }
@@ -69,91 +72,64 @@ class HomeUi(val room: HomeRoom) {
     }
 }
 
-/** 1 画面で完結 (スクロールなし): 3D はページいっぱい、構成のまとめはその上に浮かべる。 */
+/**
+ * ホーム (デザイン「ホーム（整理後）」): 3D はページいっぱい、状態は Aidy の頭の横の吹き出し、
+ * 右下に「お部屋を変える」「着せ替え」の丸ボタン。着せ替えはカーテンの演出のあと、きせかえルームに切り替える。
+ */
 @Composable
+@Suppress("UNUSED_PARAMETER")
 fun HomePage(ui: HomeUi, active: Boolean, onEdit: () -> Unit) {
-    var showColor by remember { mutableStateOf(false) }
-    if (showColor) {
-        ColorPatternDialog(
-            "Aidyの色",
-            BodyColor.pattern,
-            ui.room.rig.attached,
-            onPreview = { ui.room.rig.applyPattern(it) },
-            onConfirm = {
-                BodyColor.pattern = it
-                ui.room.rig.applyPattern(it)
-                showColor = false
-                ui.toast.show(AidyFace.Happy, "新しい色になったよ！", 2.2f)
-            },
-            onDismiss = {
-                ui.room.rig.applyPattern(BodyColor.pattern) // 選んでいた色を戻す
-                showColor = false
-            },
-        )
+    val scope = rememberCoroutineScope()
+    var showRooms by remember { mutableStateOf(false) }
+
+    fun setDressing(on: Boolean) {
+        if (ui.curtain.progress.isRunning || ui.dressing == on) return
+        scope.launch {
+            ui.curtain.play {
+                ui.room.setRoom(if (on) RoomDecor.StageRoom else RoomPref.current)
+                ui.room.setStageMode(on)
+                ui.dressing = on
+            }
+        }
     }
+    BackHandler(enabled = ui.dressing) { setDressing(false) }
+
     Box(Modifier.fillMaxSize().background(Theme.Device)) {
         View3D(
-            ui.room, active, ui.stateText, ui.mascot, "タップでなでなで ・ ドラッグで回転 ・ ピンチでズーム",
+            ui.room, active, ui.stateText, ui.mascot, null,
             Modifier.fillMaxSize(),
-            bottomInset = (SummaryHeight + SummaryMargin * 2f).dp,
+            bottomInset = if (ui.dressing) DressingSheetHeight.dp else 0.dp,
             toast = ui.toast,
             toastTop = 52.dp,
+            // 右下の丸ボタンと重ならないように、ズームボタンはその上へ
+            zoomBottom = if (ui.dressing) null else (HomeButtonsBottom + HomeButtonsHeight + 14f).dp,
+            zoomEnd = if (ui.dressing) 10.dp else (HomeButtonsEnd + 28f - 17f).dp,
         )
-        // 右上: 本体の色を変える
-        @Suppress("UNUSED_VARIABLE") val colorVersion = BodyColor.version
-        Row(
-            Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 12.dp, end = 12.dp)
-                .height(34.dp)
-                .pressable(0.95f) { showColor = true }
-                .box(Color.White.copy(alpha = 0.94f), 17.dp, 4.dp, Theme.Border)
-                .padding(start = 6.dp, end = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            PatternDot(BodyColor.pattern, 24.dp)
-            Label("色", 12f, Theme.TextMain, true)
+        StatusBubble(ui.room, ui.stateText, active)
+
+        if (ui.dressing) {
+            DressingOverlay(ui) { setDressing(false) }
+        } else {
+            // 右下: お部屋を変える・着せ替え (アイコンのみ)
+            Column(
+                Modifier.align(Alignment.BottomEnd).padding(end = HomeButtonsEnd.dp, bottom = HomeButtonsBottom.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                HomeRoundButton("お部屋を変える", HomeIconPaths.House, 56.dp, 24.dp) { showRooms = true }
+                HomeRoundButton("着せ替え", HomeIconPaths.Shirt, 56.dp, 24.dp) { setDressing(true) }
+            }
         }
 
-        // いまのモジュール + お散歩 + 付け替えへ
-        val summary = run {
-            @Suppress("UNUSED_VARIABLE") val v = ModuleConfig.version
-            moduleSummaryText(ModuleConfig.current)
-        }
-        Row(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .padding(start = 16.dp, end = 16.dp, bottom = SummaryMargin.dp)
-                .fillMaxWidth()
-                .height(SummaryHeight.dp)
-                .box(Color.White.copy(alpha = 0.94f), 18.dp, 4.dp, Theme.Border)
-                .consumeTaps()
-                .padding(start = 14.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Icon(IconId.Cubes, 14.dp, Theme.Primary)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                Label("いまのモジュール", 10f, Theme.TextSub, true)
-                Label(summary, 12f, Theme.TextMain, true, maxLines = 1)
-            }
-            Label("お散歩", 10f, Theme.Slate400, true)
-            AidySwitch(ui.room.aiEnabled, 0.8f) { ui.room.toggleAIWalk(it) }
-            Row(
-                Modifier
-                    .pressable(0.95f, onClick = onEdit)
-                    .background(Theme.Primary, RoundedCornerShape(15.dp))
-                    .padding(start = 12.dp, end = 10.dp, top = 7.dp, bottom = 7.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Label("付け替え", 12f, Color.White, true)
-                Icon(IconId.ChevronRight, 10.dp, Color.White)
-            }
-        }
+        CurtainOverlay(ui.curtain)
     }
+    if (showRooms) RoomPickerSheet(ui.room) { showRooms = false }
 }
+
+/** 右下の丸ボタンの位置 (dp)。高さは 56 + 12 + 56。 */
+private const val HomeButtonsEnd = 12f
+private const val HomeButtonsBottom = 16f
+private const val HomeButtonsHeight = 124f
 
 // ---------------------------------------------------------------- PAGE 2: リモコン・モジュール
 

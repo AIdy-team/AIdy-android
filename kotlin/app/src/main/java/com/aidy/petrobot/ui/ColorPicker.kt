@@ -63,7 +63,7 @@ fun ColorDot(color: Int, size: Dp, modifier: Modifier = Modifier) {
 
 /** 色の丸 (見本)。選択中は枠を付ける。 */
 @Composable
-private fun Swatch(color: Int, selected: Boolean, onClick: () -> Unit) {
+internal fun Swatch(color: Int, selected: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
             .size(32.dp)
@@ -97,7 +97,7 @@ fun PatternDot(p: ColorPattern, size: Dp, modifier: Modifier = Modifier) {
 
 /** パターンのプリセット (タップで使う。保存したものは長押しで削除)。 */
 @Composable
-private fun PatternSwatch(p: ColorPattern, selected: Boolean, onClick: () -> Unit, onLongPress: (() -> Unit)? = null) {
+internal fun PatternSwatch(p: ColorPattern, selected: Boolean, onClick: () -> Unit, onLongPress: (() -> Unit)? = null) {
     Box(
         Modifier
             .size(40.dp)
@@ -310,7 +310,7 @@ fun ColorPatternDialog(
 }
 
 @Composable
-private fun TargetChip(text: String, color: Int, selected: Boolean, onClick: () -> Unit) {
+internal fun TargetChip(text: String, color: Int, selected: Boolean, onClick: () -> Unit) {
     Row(
         Modifier
             .height(32.dp)

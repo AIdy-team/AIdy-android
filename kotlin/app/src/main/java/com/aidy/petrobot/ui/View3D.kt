@@ -185,7 +185,7 @@ fun View3D(
     active: Boolean,
     stateText: String,
     mascot: MascotState,
-    hintText: String,
+    hintText: String?,
     modifier: Modifier = Modifier,
     bottomInset: Dp = 0.dp,
     topInset: Dp = 0.dp,
@@ -193,6 +193,9 @@ fun View3D(
     placement: ViewPlacement = remember { ViewPlacement() },
     toast: ToastState? = null,
     toastTop: Dp = 52.dp,
+    /** ズームボタンの下の余白 (null なら bottomInset + 44dp)。右下にほかのボタンを置くページ用。 */
+    zoomBottom: Dp? = null,
+    zoomEnd: Dp = 10.dp,
 ) {
     val density = LocalDensity.current
     room.density = density.density
@@ -208,8 +211,8 @@ fun View3D(
         RoomScene(room, active, Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().roomTouch(room, placement, tray, LocalPageSwipe.current))
 
-        // 操作ヒント
-        Row(
+        // 操作ヒント (null なら出さない)
+        if (hintText != null) Row(
             Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = bottomInset + 10.dp)
@@ -224,7 +227,7 @@ fun View3D(
 
         // ズームボタン (+ / −)
         Column(
-            Modifier.align(Alignment.BottomEnd).padding(end = 10.dp, bottom = bottomInset + 44.dp),
+            Modifier.align(Alignment.BottomEnd).padding(end = zoomEnd, bottom = zoomBottom ?: (bottomInset + 44.dp)),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             for (zoomIn in listOf(true, false)) {

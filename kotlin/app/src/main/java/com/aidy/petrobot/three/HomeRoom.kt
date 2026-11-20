@@ -5,6 +5,7 @@ import com.aidy.petrobot.data.BodySlot
 import com.aidy.petrobot.data.ModuleCatalog
 import com.aidy.petrobot.data.ModuleConfig
 import com.aidy.petrobot.data.ModuleKind
+import com.aidy.petrobot.data.RoomPref
 import com.aidy.petrobot.ui.AidyFace
 import com.aidy.petrobot.ui.AidyMascotArt
 import com.aidy.petrobot.ui.FaceScreen
@@ -58,6 +59,12 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
         const val HoldPoseAfter = 6f     // 付け替え画面: 触ってからこの秒数は、回した向きのまま止めておく (底面などを選べるように)
         const val ZoomMin = 0.45f
         const val ZoomMax = 1.8f
+        private val HomeLook = V3(0f, 0.2f, 0f)
+        // 着せ替え: スツールの上の Aidy をほぼ正面 (少しだけ上) から見る
+        // デザインと同じ距離感: Aidy の中心から 1050mm 手前・200mm 上 (Aidy の一辺 300mm = 1.1) から、Aidy を見る
+        private val StageLook = V3(0f, RobotBaseY + RoomDecor.StoolHeight + 0.1f, 0f)
+        private const val DesignMm = BodySize / 300f // デザインの Aidy は一辺 300mm で描いてある
+        private val StageEye = V3(0f, RobotBaseY + RoomDecor.StoolHeight + 200f * DesignMm, 1050f * DesignMm)
     }
 
     enum class AIState { Wander, Idle, Look }
@@ -71,6 +78,8 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
     var onModulesChanged: () -> Unit = {}
     /** 3D モデルの面がタップで選ばれた/解除された (null)。editable のときだけ。 */
     var onFaceSelected: (String?) -> Unit = {}
+    /** 着せ替え中に本体の面 (top / front / back / left / right / bottom) がタップされた。 */
+    var onStageFaceTap: (String) -> Unit = {}
 
     val root: Node = gfx.empty(null, if (editable) "ModuleEdit3D" else "Home3D")
     val camera = AidyCamera(gfx.engine)
@@ -122,12 +131,23 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
     private var focusRot = V3.Zero
 
     // ズーム (カメラと注視点の距離の倍率)
-    private val camLook = V3(0f, 0.2f, 0f)
-    private val camBase = if (editable) V3(0f, 1.7f, 3.6f) else V3(0f, 2.2f, 4.2f)
+    private val homeEye = if (editable) V3(0f, 1.7f, 3.6f) else V3(0f, 2.2f, 4.2f)
+    private var camLook = HomeLook
+    private var camBase = homeEye
     private var zoom = 1f
     private var zoomTarget = 1f
 
     private val moduleListener: (String, ModuleKind?, ModuleKind?) -> Unit = { s, r, a -> onModuleChanged(s, r, a) }
+
+    // お部屋 (ホームだけ)。作り直すときは decorNode ごと消す
+    private var decorNode: Node? = null
+    private val decorMats = HashMap<Long, MaterialInstance>()
+    /** いま表示しているお部屋 (RoomDecor.RoomIds か RoomDecor.StageRoom)。 */
+    var room: String = RoomDecor.Living
+        private set
+    /** 着せ替え中 (きせかえルームの舞台の真ん中にいる)。 */
+    var stageMode = false
+        private set
 
     private fun now() = System.nanoTime() / 1e9f
 
@@ -156,8 +176,10 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
             val wall = gfx.mesh(root, Meshes.plane(8f, 4f), gfx.lit(0xfff8fafc.toInt(), 0f, 0.9f), false, true, name = "Wall")
             wall.setLocal(V3(0f, 1.35f, -2.5f))
         } else {
-            // ホーム: 家具のある部屋
-            RoomDecor(gfx, root)
+            // ホーム: 家具のある部屋 (選んだお部屋)
+            decorNode = gfx.empty(root, "Decor")
+            room = RoomPref.current
+            RoomDecor(gfx, decorNode!!, room, decorMats)
         }
 
         // ロボットモデルアセンブリ
@@ -193,6 +215,13 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
     private fun onModuleChanged(slot: String, removed: ModuleKind?, added: ModuleKind?) {
         rig.sync()
         lastTouch = now()
+        if (stageMode) {
+            // 着せ替え中は動かない (ジャンプ・驚きのリアクションなし)。吹き出しの文字だけ変える
+            if (added != null) onStatus("${ModuleCatalog.name(added)}を付けたよ")
+            else if (removed != null) onStatus("${ModuleCatalog.name(removed)}を外したよ")
+            onModulesChanged()
+            return
+        }
         if (added != null)
             startReaction(Reaction.Happy, 1.6f, "♥ ${ModuleCatalog.name(added)}モジュールを付けてもらった！", AidyFace.Happy)
         else if (removed != null)
@@ -217,6 +246,11 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
 
     /** 3D ビュー上のタップ (ビュー内の画素)。editable: 本体の面を選ぶ (外れたら解除)。ホーム: なでなで。 */
     fun tapAt(x: Float, y: Float) {
+        if (stageMode) {
+            // 着せ替え中: 面をタップしたらその面のパーツ付け替えへ (なでなで・呼び戻し・リアクションなし)
+            pickFace(x, y)?.let { onStageFaceTap(it) }
+            return
+        }
         if (wakeIfDozing()) return
         val face = pickFace(x, y)
         if (!editable) {
@@ -421,6 +455,7 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
 
     /** 長押し (指を置いたまま) で撫でられてうっとりする。 */
     fun holdStart() {
+        if (stageMode) return // 着せ替え中は反応しない
         if (wakeIfDozing()) return
         holding = true
         startReaction(Reaction.Snuggle, 999f, "なでなで… うっとり", AidyFace.Sleepy)
@@ -597,7 +632,7 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
 
         spinAccum += (abs(dx) + abs(dy)) * 0.01f
         spinVel = dx * 0.01f
-        if (reaction != Reaction.Dizzy && spinAccum > DizzyTurns * PI * 2f) {
+        if (!stageMode && reaction != Reaction.Dizzy && spinAccum > DizzyTurns * PI * 2f) { // 着せ替え中は目を回さない
             spinAccum = 0f
             play("dizzy")
         }
@@ -653,7 +688,8 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
         spinAccum *= exp(-0.6f * dt) // 回し続けないと溜まらない
 
         // しばらく触られないと居眠り (見えているときだけ)
-        if (reaction == Reaction.None && selectedFace == null && !draggingModel && visible && now() - lastTouch > DozeAfter)
+        // 着せ替え中は居眠りしない
+        if (!stageMode && reaction == Reaction.None && selectedFace == null && !draggingModel && visible && now() - lastTouch > DozeAfter)
             play("doze")
 
         if (reaction != Reaction.None) {
@@ -680,10 +716,12 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
         }
 
         // ドラッグで傾いたまま/面を見せた後は、ゆっくり水平に戻る
-        if (!draggingModel && !holdingPose() && focusTimer <= 0f && reaction != Reaction.Dizzy && reaction != Reaction.Sneeze && reaction != Reaction.Tickle) {
+        // 着せ替え中は回した向きのまま (AR の付け替えと同じく保持する)
+        if (!stageMode && !draggingModel && !holdingPose() && focusTimer <= 0f && reaction != Reaction.Dizzy && reaction != Reaction.Sneeze && reaction != Reaction.Tickle) {
             robot.r = robot.r.copy(x = lerp(robot.r.x, 0f, 0.08f), z = lerp(robot.r.z, 0f, 0.08f))
         }
-        robot.p = robot.p.copy(y = lerp(robot.p.y, if (rig.hasLegs) RobotBaseY else RestY, 0.1f))
+        val stand = if (stageMode) RoomDecor.StoolHeight else 0f // 着せ替え中はスツールの上
+        robot.p = robot.p.copy(y = lerp(robot.p.y, (if (rig.hasLegs) RobotBaseY else RestY) + stand, 0.1f))
 
         robot.apply()
         body.apply()
@@ -861,6 +899,73 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
             Reaction.None -> Unit
         }
         if (reactionTimer <= 0f) endReaction()
+    }
+
+    // ------------------------------------------------------------ お部屋・着せ替え
+
+    /** お部屋を切り替える (背景の家具を作り直す)。 */
+    fun setRoom(id: String) {
+        if (editable || id == room) return
+        decorNode?.destroyTree()
+        val n = gfx.empty(root, "Decor")
+        decorNode = n
+        room = id
+        RoomDecor(gfx, n, id, decorMats)
+    }
+
+    /**
+     * 着せ替えのオン・オフ。オンでスツールの上に立たせ、カメラをほぼ正面 (Aidy の高さ) に下ろす。
+     * オフで床に戻ってお散歩を再開する。切り替えはカーテンが閉じている間なので、位置・カメラは一気に変える。
+     */
+    fun setStageMode(on: Boolean) {
+        if (stageMode == on) return
+        stageMode = on
+        lastTouch = now()
+        recalling = false
+        focusTimer = 0f
+        val base = if (rig.hasLegs) RobotBaseY else RestY
+        if (on) {
+            aiEnabled = false
+            aiState = AIState.Idle
+            holding = false
+            if (reaction != Reaction.None) endReaction() // 入る前のリアクション (居眠りなど) は止める
+            robot.p = V3(0f, base + RoomDecor.StoolHeight, 0f)
+            robot.r = V3.Zero
+            robot.apply()
+            body.p = V3.Zero
+            body.apply()
+            rig.swingLegs(0f, 0f)
+            onStatus("") // 開いたときは吹き出しを出さない
+        } else {
+            robot.p = V3(0f, base, 0f)
+            robot.apply()
+            aiEnabled = true
+            chooseNextAIState()
+        }
+        camera.fov = if (on) ({ a: Float -> AidyCamera.stageFov(a) }) else ({ a: Float -> AidyCamera.homeFov(a) })
+        camLook = if (on) StageLook else HomeLook
+        camBase = if (on) StageEye else homeEye
+        zoom = 1f
+        zoomTarget = 1f
+        applyCamera()
+    }
+
+    /** 着せ替え中: その面をカメラへ向けたままにする (null で正面に戻す)。 */
+    fun showFace(face: String?) {
+        lastTouch = now()
+        if (face == null) {
+            focusFace("front", 1.5f)
+            return
+        }
+        focusFace(face, 3600f)
+    }
+
+    /** 頭のてっぺんの少し上を画面に投影した位置 (ビュー内の画素。吹き出し用)。 */
+    fun headScreen(): V3? {
+        if (camera.width <= 1 || camera.height <= 1) return null
+        val top = robot.p + body.p + V3(0f, BodySize * 0.62f, 0f)
+        val s = camera.worldToScreen(top)
+        return if (s.z > 0f) s else null
     }
 
     /** 画面上の点 (ビュー内の画素) → スロットの世界座標を画面に投影した位置 (トレイのドラッグ用)。 */
