@@ -296,13 +296,18 @@ object BleLink {
         }
     }
 
+    /** 本体から勝手に届く知らせ ({"ev": {...}} の行) を受け取る先。BLE のコールバックのスレッドで呼ばれる。 */
+    @Volatile var onEvent: ((JSONObject) -> Unit)? = null
+
     private fun onNotify(value: ByteArray) {
         synchronized(lineBuf) {
             for (b in value) {
                 if (b == '\n'.code.toByte()) {
                     val text = lineBuf.toString(Charsets.UTF_8.name())
                     lineBuf.reset()
-                    if (text.isNotBlank()) reply?.complete(text)
+                    // 本体からの知らせ (依頼の返事ではない): {"ev": {...}}。BodyBridge に渡す
+                    val ev = if (text.contains("\"ev\"")) runCatching { JSONObject(text).optJSONObject("ev") }.getOrNull() else null
+                    if (ev != null) onEvent?.invoke(ev) else if (text.isNotBlank()) reply?.complete(text)
                 } else {
                     lineBuf.write(b.toInt())
                 }

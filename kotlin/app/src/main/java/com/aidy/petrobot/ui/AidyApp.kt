@@ -31,6 +31,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
@@ -170,6 +172,14 @@ fun AidyApp(app: AppState) {
     Coach.arReady = app.ar != null
     // ページを移ったら知らせる (「日記をタップしてみて」などの手順用)
     LaunchedEffect(pager) { snapshotFlow { pager.settledPage }.collect { Coach.event("page$it") } }
+    // 本体との会話・表情・モジュール・予定の見回り (アプリが前に出ている間だけ)
+    val homeNow by rememberUpdatedState(homeVisible)
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            com.aidy.petrobot.data.BodyBridge.loop { homeNow }
+        }
+    }
     // 手順ごとに見せるページへ移る (ページを移るのを待っている手順はそのまま)
     val coachStep = Coach.step
     LaunchedEffect(coachStep) {

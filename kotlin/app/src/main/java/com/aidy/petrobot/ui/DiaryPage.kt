@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -114,6 +115,17 @@ class DiaryState {
     var phoneEvents by mutableStateOf<Map<String, List<ScheduleItem>>>(emptyMap())
     /** 設定で結合の ON/OFF を変えたら増やす (読み直し)。 */
     var phoneVersion by mutableIntStateOf(0)
+    /** 更新ボタンが押されたら true (同期を必ず頼む)。 */
+    var forceSync = false
+    var refreshing by mutableStateOf(false)
+
+    /** カレンダーの更新ボタン: スマホのカレンダーの同期を頼んで読み直す。 */
+    fun refreshCalendar() {
+        if (refreshing) return
+        forceSync = true
+        refreshing = true
+        phoneVersion++
+    }
 
     /** その日の予定 (このアプリ + スマホのカレンダー)。 */
     fun plansFor(d: LocalDate): List<ScheduleItem> = ScheduleStore.forDateMerged(d, phoneEvents[d.key()].orEmpty())
@@ -218,6 +230,20 @@ fun DiaryPage(state: DiaryState, shown: Boolean) {
         val from = minOf(monthStart, state.weekAnchor).minusDays(7)
         val to = maxOf(monthEnd, state.weekAnchor.plusDays(6)).plusDays(7)
         state.phoneEvents = PhoneCalendar.load(from, to)
+        state.version++
+        if (state.forceSync) {
+            state.forceSync = false
+            PhoneCalendar.pullSync(force = true)
+            delay(3000)
+            state.phoneEvents = PhoneCalendar.load(from, to)
+            state.refreshing = false
+        }
+        // Google カレンダーのアプリで足した予定は、Android の同期のあとで読めるようになる。同期を頼んで少し後に読み直す
+        PhoneCalendar.pullSync()
+        for (wait in listOf(5000L, 15000L)) {
+            delay(wait)
+            state.phoneEvents = PhoneCalendar.load(from, to)
+        }
     }
 
     val scroll = rememberScrollState()
@@ -253,11 +279,11 @@ fun DiaryPage(state: DiaryState, shown: Boolean) {
         DeviceWeekCard(state)
         Spacer(Modifier.height(12.dp))
 
-        // ---- Entry
+        // ---- 予定 (先に出す) → その日の日記
+        Box(Modifier.fillMaxWidth().coachTarget("schedule")) { ScheduleCard(state) }
+        Spacer(Modifier.height(12.dp))
         val entry = DiaryStore.get(state.selected)
         if (entry != null) EntryCard(state, entry) else EmptyCard(state) { startSync(false) }
-        Spacer(Modifier.height(12.dp))
-        Box(Modifier.fillMaxWidth().coachTarget("schedule")) { ScheduleCard(state) }
     }
         // 会話ログが長いとき用: ある程度下にスクロールしたら「上に戻る」ボタンを出す
         val showTop = scroll.value > 600
@@ -272,10 +298,7 @@ fun DiaryPage(state: DiaryState, shown: Boolean) {
                     .background(Theme.Primary, RoundedCornerShape(24.dp)),
                 contentAlignment = Alignment.Center,
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(IconId.ChevronRight, 14.dp, Color.White, Modifier.rotate(-90f))
-                    Label("上へ", 9f, Color.White, true)
-                }
+                Icon(IconId.ChevronRight, 18.dp, Color.White, Modifier.rotate(-90f))
             }
         }
     }
@@ -340,7 +363,10 @@ private fun Calendar(state: DiaryState) {
 @Composable
 private fun CalendarModeToggle(state: DiaryState) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Label("カレンダー", 13f, Theme.TextSub, true, Modifier.weight(1f).padding(start = 4.dp))
+        Label("カレンダー", 13f, Theme.TextSub, true, Modifier.padding(start = 4.dp))
+        Spacer(Modifier.size(6.dp))
+        RefreshButton(state)
+        Spacer(Modifier.weight(1f))
         Row(Modifier.background(Theme.Slate100, RoundedCornerShape(18.dp)).padding(3.dp)) {
             for (week in listOf(false, true)) {
                 val on = state.weekView == week
@@ -357,6 +383,44 @@ private fun CalendarModeToggle(state: DiaryState) {
                     Label(if (week) "週" else "月", 12f, if (on) Theme.Primary else Theme.Slate600, true)
                 }
             }
+        }
+    }
+}
+
+/** カレンダーの更新ボタン (丸い矢印)。押すとスマホのカレンダーの同期を頼んで読み直す。更新中は回る。 */
+@Composable
+private fun RefreshButton(state: DiaryState) {
+    val spin = androidx.compose.animation.core.rememberInfiniteTransition(label = "refresh")
+    val angle by spin.animateFloat(
+        0f, 360f,
+        androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(800, easing = androidx.compose.animation.core.LinearEasing)),
+        label = "refreshAngle",
+    )
+    Box(
+        Modifier.size(32.dp).pressable(0.9f) { state.refreshCalendar() }.background(Theme.Slate100, RoundedCornerShape(16.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        val color = Theme.Slate600
+        androidx.compose.foundation.Canvas(Modifier.size(16.dp).rotate(if (state.refreshing) angle else 0f)) {
+            val sw = 2.dp.toPx()
+            val r = size.width / 2f - sw
+            val c = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
+            drawArc(
+                color, startAngle = -60f, sweepAngle = 300f, useCenter = false,
+                topLeft = androidx.compose.ui.geometry.Offset(c.x - r, c.y - r), size = androidx.compose.ui.geometry.Size(r * 2, r * 2),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(sw, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+            )
+            // 矢印の先 (弧の終わり = -60° の位置に、時計回りの向きの三角)
+            val a = Math.toRadians(-60.0)
+            val tip = androidx.compose.ui.geometry.Offset(c.x + r * Math.cos(a).toFloat(), c.y + r * Math.sin(a).toFloat())
+            val h = sw * 2.2f
+            val path = androidx.compose.ui.graphics.Path().apply {
+                moveTo(tip.x + h, tip.y - h * 0.2f)
+                lineTo(tip.x - h * 0.9f, tip.y - h * 0.9f)
+                lineTo(tip.x - h * 0.1f, tip.y + h * 1.1f)
+                close()
+            }
+            drawPath(path, color)
         }
     }
 }
@@ -627,6 +691,7 @@ private fun ScheduleRow(state: DiaryState, item: ScheduleItem) {
 
 @Composable
 private fun Editor(state: DiaryState, item: ScheduleItem) {
+    val scope = rememberCoroutineScope()
     val isNew = item.id.isEmpty()
     var title by remember(item.id) { mutableStateOf(item.title) }
     var time by remember(item.id) { mutableStateOf(item.time) }
@@ -657,7 +722,10 @@ private fun Editor(state: DiaryState, item: ScheduleItem) {
                         state.confirmDelete = true
                         return@SmallButton
                     }
-                    ScheduleStore.delete(item.id)
+                    ScheduleStore.delete(item.id)?.let { old ->
+                        // スマホのカレンダーからも消す (結合 ON・書く許可ありのとき)
+                        scope.launch { PhoneCalendar.remove(old); state.phoneVersion++ }
+                    }
                     state.mascot.react(AidyFace.Surprised, 1f)
                     state.openEditor(null)
                     state.version++
@@ -673,7 +741,9 @@ private fun Editor(state: DiaryState, item: ScheduleItem) {
                     error = msg
                     return@SmallButton
                 }
-                ScheduleStore.save(ScheduleItem(item.id, item.date, tm!!, t, memo.trim()))
+                val saved = ScheduleStore.save(item.copy(time = tm!!, title = t, memo = memo.trim()))
+                // スマホのカレンダーにも書く (結合 ON・書く許可ありのとき)
+                scope.launch { PhoneCalendar.pushAndLink(saved, if (isNew) null else item); state.phoneVersion++ }
                 state.mascot.react(AidyFace.Happy, 1.2f)
                 state.openEditor(null)
                 state.version++
