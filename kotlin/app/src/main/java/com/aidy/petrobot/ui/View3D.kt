@@ -102,7 +102,7 @@ fun Modifier.roomTouch(
             val velocity = VelocityTracker()
             velocity.addPosition(first.uptimeMillis, pressPos)
             // なでなで (ホームで本体の上から始めた指を、左右に細かく往復させる)
-            val canRub = !room.editable && room.isOverRobot(pressPos.x, pressPos.y)
+            val canRub = !room.editable && !room.stageMode && room.isOverRobot(pressPos.x, pressPos.y)
             var rubbing = false
             var lastSign = 0
             var stroke = 0f
@@ -171,7 +171,7 @@ fun Modifier.roomTouch(
                 // プレビュー: 選んだ面の取り付け済みモジュールをつかんだら、モジュールのドラッグ (移動/取り外し) にする
                 if (!dragStarted && (delta.x != 0f || delta.y != 0f)) {
                     dragStarted = true
-                    if (room.editable && tray != null && !held && room.selectedFace != null) {
+                    if ((room.editable || room.stageMode) && tray != null && !held && room.selectedFace != null) {
                         // 面をタップで選んでから、その面のモジュールだけつかめる (ほかの面のモジュールは反応しない)
                         // モジュールの見た目全体 (+余白) で判定する
                         val slot = room.moduleAtScreen(pressPos.x, pressPos.y, 18f, onlySelected = true)

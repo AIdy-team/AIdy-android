@@ -198,9 +198,9 @@ fun CurtainOverlay(state: CurtainState) {
         drawRect(stripes, Offset(size.width - half, 0f), androidx.compose.ui.geometry.Size(half, size.height))
         // 金の裾
         val hem = 10.dp.toPx()
-        val gold = Theme.hex(0xd4a537)
-        drawRect(gold, Offset(0f, size.height - hem), androidx.compose.ui.geometry.Size(half, hem))
-        drawRect(gold, Offset(size.width - half, size.height - hem), androidx.compose.ui.geometry.Size(half, hem))
+        val hemColor = Theme.hex(0xd4a537)
+        drawRect(hemColor, Offset(0f, size.height - hem), androidx.compose.ui.geometry.Size(half, hem))
+        drawRect(hemColor, Offset(size.width - half, size.height - hem), androidx.compose.ui.geometry.Size(half, hem))
     }
 }
 
@@ -210,9 +210,9 @@ fun CurtainOverlay(state: CurtainState) {
 private data class RoomOption(val id: String, val name: String, val sub: String, val wall: Color, val floor: Color, val rug: Color)
 
 private val RoomOptions = listOf(
-    RoomOption(RoomDecor.Living, "リビング", "テーブルの上", Theme.hex(0xf3ece2), Theme.hex(0xdcb48a), Theme.hex(0xb9d3ef)),
-    RoomOption(RoomDecor.Desk, "自分の部屋", "机の上", Theme.hex(0xe6ecf2), Theme.hex(0xc49a6c), Theme.hex(0x4f7d6a)),
-    RoomOption(RoomDecor.Kids, "子ども部屋", "おもちゃのそば", Theme.hex(0xfbe6df), Theme.hex(0xe6c9a0), Theme.hex(0xf7d27a)),
+    RoomOption(RoomDecor.Living, "リビング", "テーブルの上", Theme.hex(0xefe6da), Theme.hex(0x9c7b5b), Theme.hex(0xb88a5e)),
+    RoomOption(RoomDecor.Desk, "自分の部屋", "机の上", Theme.hex(0xdce3ee), Theme.hex(0xcba57b), Theme.hex(0xefe4d2)),
+    RoomOption(RoomDecor.Kids, "子ども部屋", "おもちゃのそば", Theme.hex(0xe6f3ec), Theme.hex(0xebc48f), Theme.hex(0xa8d5c2)),
 )
 
 /**

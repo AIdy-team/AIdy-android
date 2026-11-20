@@ -63,10 +63,10 @@ fun ColorDot(color: Int, size: Dp, modifier: Modifier = Modifier) {
 
 /** 色の丸 (見本)。選択中は枠を付ける。 */
 @Composable
-internal fun Swatch(color: Int, selected: Boolean, onClick: () -> Unit) {
+internal fun Swatch(color: Int, selected: Boolean, size: androidx.compose.ui.unit.Dp = 32.dp, onClick: () -> Unit) {
     Box(
         Modifier
-            .size(32.dp)
+            .size(size)
             .border(if (selected) 3.dp else 1.dp, if (selected) Theme.Primary else Theme.Border, CircleShape)
             .padding(if (selected) 5.dp else 3.dp)
             .background(argbColor(color), CircleShape)
@@ -268,7 +268,7 @@ fun ColorPatternDialog(
 
             // 見本の色
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                for (c in BodyColor.BuiltIn) Swatch(c, c == color, {
+                for (c in BodyColor.BuiltIn) Swatch(c, c == color, onClick = {
                     loadHsv(c)
                     changed()
                 })

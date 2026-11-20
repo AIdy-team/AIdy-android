@@ -30,17 +30,7 @@ class RoomDecor(private val gfx: Gfx, private val root: Node, room: String, priv
         private const val StoolWidth = 1.875f
 
         /** 使う家具 (先読み用)。 */
-        val Names = listOf(
-            // リビング
-            "tableCoffee", "loungeSofa", "pillowBlue", "bear", "lampRoundFloor", "pottedPlant",
-            "rugRounded", "sideTable", "plantSmall1", "books", "bookcaseOpen",
-            // 自分の部屋
-            "desk", "computerScreen", "computerKeyboard", "computerMouse", "lampRoundTable", "speakerSmall", "plantSmall2",
-            // 子ども部屋
-            "rugRound", "bedBunk", "bookcaseOpenLow", "sideTableDrawers", "lampSquareTable", "radio", "plantSmall3", "cardboardBoxOpen",
-            // きせかえルーム
-            "stoolBar",
-        )
+        val Names = listOf("stoolBar") // ホームの 3 部屋はデザインの寸法で形から作る。モデルを使うのはきせかえルームのスツールだけ
 
         // 形のメッシュ (一度だけ作る。GPU 側も Gfx が MeshData ごとに使い回す)
         private val cube by lazy { Meshes.cube() }
@@ -64,114 +54,157 @@ class RoomDecor(private val gfx: Gfx, private val root: Node, room: String, priv
         }
     }
 
-    // ------------------------------------------------------------ 実寸の縮尺
+    // ------------------------------------------------------------ デザイン「お部屋 3パターン」の寸法
     //
-    // 本体は一辺 30cm = BodySize (1.1)。1m = 1.1 / 0.3 ≒ 3.67。
-    // Kenney の家具は 1 = 約 1.85m (机の高さ 0.384 ≒ 72cm、ソファの高さ 0.46 ≒ 85cm) なので、K 倍すると実寸になる。
-    // 本体の足もとの高さ (Floor) が Aidy の立っている面: リビングはテーブルの上、自分の部屋は机の上、子ども部屋は床。
+    // デザインの座標 (mm): X 右・Y 上 (0 = カメラの高さ)・Z 奥。Aidy (一辺 300mm) は Y = -350 の面に立ち、中心は Z = 1050。
+    // ここでは Aidy の一辺 300mm = BodySize (1.1) で換算し、Y = -350 の面を Floor (Aidy の足もと) に合わせる。
+    // お散歩の範囲 (x ±1.1, z ±0.6) にかかる小物は、デザインより少し外へずらしている。
 
-    // ------------------------------------------------------------ リビング (テーブルの上)
+    // init (部屋を作る) より後ろに書いてあるので、値を持つプロパティにせず毎回計算する (初期化前は 0 になるため)
+    private val dk: Float get() = 1.1f / 300f
+    private fun dx(mm: Float) = mm * dk
+    private fun dy(mm: Float) = Floor + (mm + 350f) * dk
+    private fun dz(mm: Float) = -(mm - 1050f) * dk
+
+    /** デザインの箱 [x0, x1, y0, y1, z0, z1] (mm)。 */
+    private fun dbox(x0: Float, x1: Float, y0: Float, y1: Float, z0: Float, z1: Float, color: Int, rough: Float = 0.75f) {
+        box((dx(x0) + dx(x1)) * 0.5f, dy(y0), (dz(z0) + dz(z1)) * 0.5f, dx(x1) - dx(x0), dy(y1) - dy(y0), dz(z0) - dz(z1), color, rough = rough)
+    }
+
+    /** デザインの部屋の箱: 奥の壁・左右の壁・天井・床 (mm)。null の面は作らない。z は奥の壁から手前 (カメラの後ろ) まで。 */
+    private fun dRoom(
+        x0: Float, x1: Float, yFloor: Float, yCeil: Float, zBack: Float,
+        back: Int, left: Int?, right: Int?, ceil: Int?, floor: Int?,
+    ) {
+        val w = dx(x1) - dx(x0)
+        val cx = (dx(x0) + dx(x1)) * 0.5f
+        val h = dy(yCeil) - dy(yFloor)
+        val cy = (dy(yFloor) + dy(yCeil)) * 0.5f
+        val zb = dz(zBack)
+        val front = 9f
+        val depth = front - zb
+        val cz = (front + zb) * 0.5f
+        gfx.mesh(root, Meshes.plane(w + 30f, h + 30f), mat(back, 0.9f), false, true, name = "Back").setLocal(V3(cx, cy, zb))
+        left?.let { gfx.mesh(root, Meshes.plane(depth, h), mat(it, 0.9f), false, true, name = "Left").setLocal(V3(dx(x0), cy, cz), Q.euler(0f, PI / 2f, 0f)) }
+        right?.let { gfx.mesh(root, Meshes.plane(depth, h), mat(it, 0.9f), false, true, name = "Right").setLocal(V3(dx(x1), cy, cz), Q.euler(0f, -PI / 2f, 0f)) }
+        ceil?.let { gfx.mesh(root, Meshes.plane(w, depth), mat(it, 0.9f), false, true, name = "Ceiling").setLocal(V3(cx, dy(yCeil), cz), Q.euler(PI / 2f, 0f, 0f)) }
+        floor?.let { gfx.mesh(root, Meshes.plane(w, depth), mat(it, 0.6f), false, true, name = "Floor").setLocal(V3(cx, dy(yFloor), cz), Q.euler(-PI / 2f, 0f, 0f)) }
+    }
+
+    // ------------------------------------------------------------ リビング (ローテーブルの上。奥にソファと窓)
 
     private fun living() {
-        val roomFloor = Floor - 0.23f * K // ローテーブルの高さ (約 43cm) だけ下が部屋の床
-        val backZ = -6.2f
-        room(0xfff3ece2.toInt(), 0xffdcb48a.toInt(), roomFloor, backZ)
-        put("rugRounded", 0f, -1.5f, y = roomFloor + 0.003f, s = K, override = mapOf("carpet" to 0xffb9d3ef.toInt(), "carpetDarker" to 0xff8fb2dc.toInt()))
+        val white = 0xffffffff.toInt()
+        dRoom(-800f, 2000f, -750f, 1650f, 2900f, back = 0xffefe6da.toInt(), left = 0xffe3d6c5.toInt(), right = 0xffe3d6c5.toInt(), ceil = 0xfff6f0e8.toInt(), floor = 0xff9c7b5b.toInt())
 
-        // Aidy が乗っているローテーブル (天板 = Floor)
-        put("tableCoffee", 0f, 0f, y = roomFloor, s = K)
-        // テーブルの上の小物: 本・植木鉢・マグカップ・リモコン
-        put("books", -1.85f, -0.85f, y = Floor, s = K, yaw = PI * 0.9f)
-        put("plantSmall1", 1.9f, -0.85f, y = Floor, s = K)
-        cyl(1.95f, Floor, 0.75f, 0.17f, 0.17f, 0.36f, 0xfff5f0e1.toInt(), rough = 0.4f)
-        cyl(1.95f, Floor + 0.34f, 0.75f, 0.14f, 0.14f, 0.025f, 0xff6b4a2b.toInt(), rough = 0.2f)
-        box(-1.8f, Floor, 0.8f, 0.17f, 0.08f, 0.6f, 0xff3a3d44.toInt(), yaw = 0.3f, rough = 0.5f)
+        // 窓 (枠・ガラス・桟) とカーテン
+        dbox(-300f, 800f, 150f, 1250f, 2890f, 2900f, white, 0.6f)
+        dbox(-250f, 750f, 200f, 1200f, 2880f, 2890f, 0xffcfe6f5.toInt(), 0.2f)
+        dbox(225f, 275f, 200f, 1200f, 2870f, 2880f, white, 0.6f)
+        dbox(-250f, 750f, 675f, 725f, 2870f, 2880f, white, 0.6f)
+        dbox(-560f, -320f, 0f, 1550f, 2750f, 2850f, 0xffe3a97c.toInt(), 0.95f)
+        dbox(820f, 1060f, 0f, 1550f, 2750f, 2850f, 0xffe3a97c.toInt(), 0.95f)
 
-        // 奥: ソファ (クッション・くま)、左にスタンドライト、右に観葉植物
-        val sofaZ = backZ + 0.41f * K * 0.5f + 0.05f
-        put("loungeSofa", 0f, sofaZ, y = roomFloor, s = K)
-        val seat = roomFloor + 0.23f * K
-        put("pillowBlue", -1.6f, sofaZ - 0.4f, y = seat, s = K, yaw = PI * 0.92f)
-        put("bear", 1.5f, sofaZ - 0.2f, y = seat, s = K * 0.45f, yaw = PI * 1.1f)
-        put("lampRoundFloor", -4.4f, backZ + 0.7f, y = roomFloor, s = K)
-        put("pottedPlant", 4.4f, backZ + 0.9f, y = roomFloor, s = K)
+        // ソファ (背もたれ・座面・クッション 2 つ・ひじかけ)
+        dbox(-1300f, 400f, -750f, 100f, 2550f, 2800f, 0xff8fa5b9.toInt(), 0.9f)
+        dbox(-1300f, 400f, -750f, -330f, 1900f, 2800f, 0xff8fa5b9.toInt(), 0.9f)
+        dbox(-1050f, -450f, -330f, 150f, 2400f, 2550f, 0xffa9bccd.toInt(), 0.95f)
+        dbox(-400f, 200f, -330f, 150f, 2400f, 2550f, 0xffa9bccd.toInt(), 0.95f)
+        dbox(250f, 400f, -750f, -150f, 1900f, 2550f, 0xff829aaf.toInt(), 0.9f)
 
-        // 外側 (引くと見える): 左にサイドテーブル、右に本棚
-        put("sideTable", -7.2f, backZ + 0.22f * K * 0.5f + 0.05f, y = roomFloor, s = K)
-        put("bookcaseOpen", 7.4f, backZ + 0.25f * K * 0.5f + 0.05f, y = roomFloor, s = K)
+        // 観葉植物 (鉢・葉)
+        dbox(550f, 850f, -750f, -450f, 2300f, 2600f, 0xffc97b5a.toInt())
+        dbox(500f, 900f, -450f, 250f, 2250f, 2650f, 0xff6e9f6a.toInt(), 0.9f)
+
+        // Aidy が乗っているローテーブル (高さ 400mm。天板 = Floor) と脚
+        dbox(-1000f, 1000f, -380f, -350f, 450f, 1400f, 0xffb88a5e.toInt(), 0.6f)
+        for (lx in listOf(-940f, 900f)) for (lz in listOf(500f, 1310f)) dbox(lx, lx + 40f, -750f, -380f, lz, lz + 40f, 0xff9c7552.toInt(), 0.6f)
+
+        // テーブルの上: 本 (平置き)・マグカップ・リモコン
+        dbox(-420f, -180f, -350f, -342f, 1080f, 1380f, 0xffd9774b.toInt())
+        cyl(dx(560f), Floor, dz(990f), dx(40f), dx(40f), dx(95f), 0xfff7f2ea.toInt(), rough = 0.4f)
+        dbox(600f, 620f, -330f, -280f, 975f, 1005f, 0xffede6db.toInt(), 0.4f)
+        dbox(-420f, -370f, -350f, -330f, 800f, 980f, 0xff3f4a57.toInt(), 0.5f)
     }
 
-    // ------------------------------------------------------------ 自分の部屋 (PC のあるデスクの上)
+    // ------------------------------------------------------------ 自分の部屋 (机の上。壁まで約 30cm)
 
     private fun desk() {
-        val deskH = 0.384f * K // 机の高さ (約 72cm)
-        val roomFloor = Floor - deskH
-        val backZ = -2.65f // 机は壁に付けて置く
-        room(0xffe6ecf2.toInt(), 0xffb8916a.toInt(), roomFloor, backZ)
+        val white = 0xffffffff.toInt()
+        val roomFloor = -350f - 720f // 机の高さ 720mm の下が部屋の床
+        dRoom(-4000f, 4000f, roomFloor, 1800f, 1500f, back = 0xffdce3ee.toInt(), left = null, right = null, ceil = null, floor = 0xffb8916a.toInt())
 
-        // 机 (天板 = Floor)。お散歩できるよう、モデルより少し奥行きのある机にする
-        val deskScale = V3(K * 1.2f, K, K * 1.6f)
-        val deskDepth = 0.392f * deskScale.z
-        put("desk", 0f, backZ + deskDepth * 0.5f + 0.02f, y = roomFloor, scale = deskScale, override = mapOf("wood" to 0xffd9b48c.toInt()))
-        // デスクマット (お散歩する場所)
-        gfx.mesh(root, Meshes.plane(3.8f, 2.5f), mat(0xff4f7d6a.toInt(), 0.9f), false, true, name = "DeskMat")
-            .setLocal(V3(0f, Floor + 0.004f, 0.1f), Q.euler(-PI / 2f, 0f, 0f))
+        // コルクボードとメモ
+        dbox(-620f, -120f, 150f, 550f, 1485f, 1500f, 0xffb48a60.toInt())
+        dbox(-600f, -140f, 170f, 530f, 1480f, 1485f, 0xffd9b48c.toInt(), 0.95f)
+        dbox(-560f, -440f, 380f, 500f, 1475f, 1480f, white, 0.9f)
+        dbox(-400f, -280f, 400f, 500f, 1475f, 1480f, 0xfffde68a.toInt(), 0.9f)
+        dbox(-460f, -320f, 220f, 340f, 1475f, 1480f, 0xffbfdbfe.toInt(), 0.9f)
 
-        // PC: モニター・キーボード・マウス
-        put("computerScreen", 0f, backZ + 0.45f, y = Floor, s = K)
-        put("computerKeyboard", -0.2f, -1.55f, y = Floor, s = K)
-        put("computerMouse", 1.45f, -1.5f, y = Floor, s = K)
-        // 左: 卓上ライトと本の山、右: スピーカー・植木鉢・マグカップ
-        put("lampRoundTable", -2.45f, backZ + 0.6f, y = Floor, s = K, yaw = PI * 0.85f)
-        put("books", -2.4f, -0.5f, y = Floor, s = K, yaw = PI * 1.1f)
-        put("books", -2.35f, -0.5f, y = Floor + 0.104f * K, s = K, yaw = PI * 0.95f)
-        put("speakerSmall", 2.45f, backZ + 0.55f, y = Floor, s = K, yaw = PI * 1.1f)
-        put("plantSmall2", 2.5f, -0.9f, y = Floor, s = K)
-        cyl(2.15f, Floor, 0.5f, 0.17f, 0.17f, 0.36f, 0xff7cc4f0.toInt(), rough = 0.4f)
+        // 壁の棚 (2 段): 上に本と植木、下に箱
+        dbox(100f, 700f, 650f, 680f, 1300f, 1500f, 0xff9c7a5a.toInt(), 0.6f)
+        dbox(100f, 700f, 250f, 280f, 1300f, 1500f, 0xff9c7a5a.toInt(), 0.6f)
+        val books = listOf(
+            Triple(130f, 170f, 930f) to 0xff3b5b8c.toInt(), Triple(175f, 205f, 880f) to 0xffd9774b.toInt(),
+            Triple(210f, 255f, 950f) to 0xff6b9f7a.toInt(), Triple(260f, 290f, 900f) to 0xffe7c36a.toInt(),
+            Triple(295f, 330f, 920f) to 0xff7e6bb0.toInt(),
+        )
+        for ((b, c) in books) dbox(b.first, b.second, 680f, b.third, 1320f, 1480f, c)
+        dbox(520f, 640f, 680f, 800f, 1350f, 1450f, 0xffa7c4a0.toInt(), 0.9f)
+        dbox(150f, 350f, 280f, 430f, 1330f, 1480f, 0xffefe4d2.toInt(), 0.9f)
 
-        // 壁の棚 (本と植木鉢)
-        box(0f, Floor + 3.4f, backZ + 0.35f, 4.6f, 0.12f, 0.7f, 0xffd9b48c.toInt(), rough = 0.6f)
-        put("books", -1.3f, backZ + 0.35f, y = Floor + 3.52f, s = K, yaw = PI * 0.95f)
-        put("plantSmall3", 1.4f, backZ + 0.35f, y = Floor + 3.52f, s = K)
+        // 机 (天板 = Floor) と脚
+        dbox(-900f, 900f, -380f, -350f, 450f, 1500f, 0xffcba57b.toInt(), 0.5f)
+        for (lx in listOf(-860f, 820f)) for (lz in listOf(490f, 1420f)) dbox(lx, lx + 40f, roomFloor, -380f, lz, lz + 40f, 0xff8a6a4c.toInt(), 0.6f)
+
+        // 机の上: デスクライト (台・柱・かさ)・ペン立てとペン・ノート
+        val lamp = 0xff4b5563.toInt()
+        dbox(-660f, -500f, -350f, -325f, 1150f, 1310f, lamp, 0.5f)
+        dbox(-595f, -570f, -325f, 80f, 1215f, 1245f, lamp, 0.5f)
+        dbox(-640f, -420f, 30f, 110f, 1150f, 1350f, lamp, 0.5f)
+        dbox(480f, 560f, -350f, -240f, 1150f, 1230f, 0xff7c93b3.toInt(), 0.5f)
+        dbox(495f, 510f, -240f, -120f, 1180f, 1195f, 0xfff2b544.toInt(), 0.5f)
+        dbox(525f, 538f, -240f, -100f, 1180f, 1193f, 0xffe5604d.toInt(), 0.5f)
+        dbox(-450f, -250f, -350f, -340f, 750f, 1000f, white, 0.9f)
     }
 
-    // ------------------------------------------------------------ 子ども部屋 (床の上・おもちゃのそば)
+    // ------------------------------------------------------------ 子ども部屋 (床のラグの上。Aidy 目線で家具が大きい)
 
     private fun kids() {
-        val backZ = -5.5f
-        room(0xfffbe6df.toInt(), 0xffe6c9a0.toInt(), Floor, backZ)
-        put("rugRound", 0f, -0.6f, y = Floor + 0.003f, s = K, override = mapOf("carpet" to 0xfff7d27a.toInt(), "carpetDarker" to 0xffeab948.toInt()))
+        val white = 0xffffffff.toInt()
+        dRoom(-900f, 2500f, -350f, 2050f, 2600f, back = 0xffe6f3ec.toInt(), left = 0xffd5eadf.toInt(), right = 0xffd5eadf.toInt(), ceil = 0xfff3f9f5.toInt(), floor = 0xffebc48f.toInt())
 
-        // 壁の星かざり
-        val stars = listOf(0xfff6d36b.toInt(), 0xfff4a7c0.toInt(), 0xff7cc4f0.toInt(), 0xff8fd6b4.toInt(), 0xffa78bfa.toInt())
-        for ((i, c) in stars.withIndex()) {
-            gfx.mesh(root, starMesh, mat(c, 0.6f), false, false, name = "Star")
-                .setLocal(V3(-3.2f + i * 1.6f, Floor + 4.4f + (i % 2) * 0.5f, backZ + 0.02f), Q.euler(0f, 0f, i * 0.3f), 0.45f)
+        // 窓と額
+        dbox(-500f, 300f, 600f, 1700f, 2590f, 2600f, white, 0.6f)
+        dbox(-450f, 250f, 650f, 1650f, 2580f, 2590f, 0xffcde8fa.toInt(), 0.2f)
+        dbox(-300f, 0f, 1100f, 1250f, 2575f, 2580f, white, 0.6f)
+        dbox(700f, 1100f, 900f, 1200f, 2590f, 2600f, 0xfff5cf5b.toInt(), 0.6f)
+        dbox(730f, 1070f, 930f, 1170f, 2585f, 2590f, white, 0.9f)
+
+        // ガーランド (ひもと旗)
+        dbox(-900f, 2500f, 1880f, 1888f, 2570f, 2575f, 0xff8b7b6b.toInt())
+        val flags = listOf(0xfff59e6b.toInt(), 0xff6ba8f5.toInt(), 0xfff5cf5b.toInt(), 0xff8fd19e.toInt(), 0xfff28b9b.toInt(), 0xffb49cf0.toInt())
+        for (i in 0 until 12) {
+            gfx.mesh(root, cube, mat(flags[i % flags.size], 0.8f), false, true, name = "Flag")
+                .setLocal(V3(dx(-700f + i * 270f), dy(1800f), dz(2565f)), Q.euler(0f, 0f, PI / 4f), V3(dx(90f), dx(90f), 0.01f))
         }
 
-        // 左: 二段ベッド (奥の壁から手前へ)
-        put("bedBunk", -4.6f, backed("bedBunk", K, backZ), s = K, override = mapOf("carpet" to 0xfff4a7c0.toInt()))
+        // 右奥: 白い低い棚とおもちゃ
+        dbox(600f, 1400f, -350f, 550f, 2200f, 2550f, 0xfff7f3ec.toInt(), 0.7f)
+        dbox(700f, 900f, 550f, 750f, 2300f, 2500f, 0xff6ba8f5.toInt(), 0.6f)
+        dbox(950f, 1100f, 550f, 700f, 2300f, 2450f, 0xfff59e6b.toInt(), 0.6f)
 
-        // 奥: 低い本棚の上にくま (約 35cm)、右に引き出し付きの台 (ライト・ラジオ・植木鉢)
-        put("bookcaseOpenLow", -0.4f, backed("bookcaseOpenLow", K, backZ), s = K)
-        put("bear", -0.4f, backZ + 0.8f, y = Floor + 0.4f * K, s = 2.85f, yaw = PI * 1.05f)
-        put("sideTableDrawers", 3.6f, backed("sideTableDrawers", K, backZ), s = K, override = mapOf("_defaultMat" to 0xff7cc4f0.toInt()))
-        val table = Floor + 0.384f * K
-        put("lampSquareTable", 2.6f, backZ + 0.75f, y = table, s = K)
-        put("radio", 3.9f, backZ + 0.75f, y = table, s = 4.5f, yaw = PI * 0.95f)
-        put("plantSmall3", 4.9f, backZ + 0.75f, y = table, s = K)
+        // 左: おもちゃ箱
+        dbox(-850f, -500f, -350f, 50f, 1800f, 2200f, 0xfff5cf5b.toInt(), 0.7f)
 
-        // おもちゃ (実寸): 段ボールのおもちゃ箱、積み木 (約 8cm)、ボール (約 20cm)
-        put("cardboardBoxOpen", 3.3f, -1.9f, s = K, yaw = PI * 0.9f)
-        val k = 0.3f
-        val tower = listOf(0xffe5484d.toInt(), 0xff2f80ed.toInt(), 0xfff6d36b.toInt(), 0xff10b981.toInt())
-        for ((i, c) in tower.withIndex()) box(2.25f, Floor + i * k, 0.5f, k, k, k, c, yaw = i * 0.25f, rough = 0.55f)
-        box(-2.0f, Floor, 0.7f, k, k, k, 0xfff08a5d.toInt(), yaw = 0.5f, rough = 0.55f)
-        box(-2.45f, Floor, 0.35f, k, k, k, 0xffa78bfa.toInt(), yaw = -0.3f, rough = 0.55f)
-        box(2.0f, Floor, 1.0f, k, k, k, 0xff8fd6b4.toInt(), yaw = 0.8f, rough = 0.55f)
-        sph(-2.3f, Floor + 0.37f, -1.3f, 0.37f, 0xffe5484d.toInt())
-        gfx.mesh(root, cylinder(1f), mat(0xfffafafa.toInt(), 0.5f), false, true, name = "BallBand")
-            .setLocal(V3(-2.3f, Floor + 0.37f, -1.3f), Q.euler(0f, 0f, 0.4f), V3(0.375f, 0.11f, 0.375f))
+        // ラグ (Aidy が立っている場所)
+        dbox(-700f, 700f, -350f, -345f, 550f, 1800f, 0xffa8d5c2.toInt(), 0.95f)
+
+        // 積み木 (3 つ) とボール
+        dbox(550f, 630f, -350f, -270f, 1000f, 1080f, 0xff6ba8f5.toInt(), 0.55f)
+        dbox(640f, 720f, -350f, -270f, 1000f, 1080f, 0xfff59e6b.toInt(), 0.55f)
+        dbox(595f, 675f, -270f, -190f, 1000f, 1080f, 0xfff5cf5b.toInt(), 0.55f)
+        sph(dx(-600f), dy(-260f), dz(1090f), dx(90f), 0xfff28b82.toInt())
     }
 
     // ------------------------------------------------------------ きせかえルーム (試着室の内側: 鏡の壁・ハンガー・ベンチ + 丸いスツール)
@@ -192,7 +225,7 @@ class RoomDecor(private val gfx: Gfx, private val root: Node, room: String, priv
         }
 
         // 部屋: 幅 1200mm・高さ 2100mm。奥の壁は Z = 1920、左右の壁・床・天井は手前 (カメラの後ろ) まで伸ばす
-        val halfW = ux(600f)
+        val halfW = ux(540f) // カメラを近づけたぶん少し狭めの試着室
         val backZ = uz(1920f)
         val top = uy(1300f)
         val front = 9f
@@ -218,16 +251,16 @@ class RoomDecor(private val gfx: Gfx, private val root: Node, room: String, priv
                 .setLocal(V3(ux(dx), uy(820f), uz(1893f)), Q.euler(0f, 0f, -0.42f), V3(ux(w), ux(len), 0.005f))
         }
 
-        // 右: ハンガーラック (台・柱・横棒) と青い服
-        bx(420f, 580f, floorMm, -780f, 1520f, 1680f, 0xff5b6475.toInt())
-        bx(540f, 565f, -780f, 900f, 1590f, 1615f, 0xff5b6475.toInt(), 0.5f)
-        bx(460f, 600f, 690f, 710f, 1585f, 1620f, 0xff8b6b4a.toInt(), 0.6f)
-        bx(470f, 590f, 150f, 690f, 1560f, 1600f, 0xff6ba8f5.toInt(), 0.9f)
+        // 右: ハンガーラック (台・柱・横棒) と青い服 (カメラを近づけたので画面に入るよう内側へ寄せる)
+        bx(310f, 470f, floorMm, -780f, 1520f, 1680f, 0xff5b6475.toInt())
+        bx(430f, 455f, -780f, 900f, 1590f, 1615f, 0xff5b6475.toInt(), 0.5f)
+        bx(350f, 490f, 690f, 710f, 1585f, 1620f, 0xff8b6b4a.toInt(), 0.6f)
+        bx(360f, 480f, 150f, 690f, 1560f, 1600f, 0xff6ba8f5.toInt(), 0.9f)
 
-        // 左: 低いベンチと靴
-        bx(-560f, -300f, floorMm, -600f, 1300f, 1500f, 0xffc8a46e.toInt(), 0.6f)
-        bx(-480f, -360f, -600f, -470f, 1360f, 1440f, 0xff2b2f36.toInt(), 0.5f)
-        bx(-520f, -320f, -600f, -585f, 1340f, 1460f, 0xff2b2f36.toInt(), 0.5f)
+        // 左: 低いベンチと靴 (内側へ寄せる)
+        bx(-470f, -250f, floorMm, -600f, 1300f, 1500f, 0xffc8a46e.toInt(), 0.6f)
+        bx(-400f, -290f, -600f, -470f, 1360f, 1440f, 0xff2b2f36.toInt(), 0.5f)
+        bx(-440f, -260f, -600f, -585f, 1340f, 1460f, 0xff2b2f36.toInt(), 0.5f)
 
         // スツールの下の丸いラグ
         gfx.mesh(root, Meshes.circle(1.7f, 48), mat(0xffe7d3b8.toInt(), 0.95f), false, true, name = "BoothRug")

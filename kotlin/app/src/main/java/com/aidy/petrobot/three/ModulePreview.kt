@@ -111,7 +111,10 @@ object ModulePreview {
     }
 
     /** 縦軸まわりに yaw 度回した向きで描く (重いので UI スレッド以外で呼ぶ)。 */
-    fun render(kind: ModuleKind, yawDeg: Float, out: Bitmap? = null): Bitmap {
+    /** tint: パーツの色 (指定すると、標準のグレーの部分をこの色で描く。着せ替えのカラーの画面用)。 */
+    fun render(kind: ModuleKind, yawDeg: Float, out: Bitmap? = null, tint: Int? = null): Bitmap {
+        val satinV = rgb(AidyColors.Satin)
+        val tintV = tint?.let { rgb(it) }
         val e = ensure(kind)
         val px = IntArray(Px * Px) { e.bg }
         val depth = FloatArray(Px * Px) { Float.MAX_VALUE }
@@ -144,7 +147,7 @@ object ModulePreview {
                 // 頂点ごとに明るさを計算 (グーロー)
                 val n = rot * ns[k]
                 val viewV = (eye - w).normalized()
-                shade[k] = shadeColor(tri, n, viewV, toLight)
+                shade[k] = shadeColor(tri, n, viewV, toLight, if (tintV != null && tri.color == satinV) tintV else tri.color)
             }
             if (behind) continue
             // 裏面は描かない (画面座標は y 下向きなので、表 = 時計回り)
@@ -184,11 +187,11 @@ object ModulePreview {
     }
 
     /** 平行光 (強さ 0.95) + 環境光 + 鏡面反射 (金属感)。返す色は sRGB。 */
-    private fun shadeColor(tri: Tri, n0: V3, view: V3, light: V3): V3 {
-        if (tri.unlit) return tri.color
+    private fun shadeColor(tri: Tri, n0: V3, view: V3, light: V3, color: V3 = tri.color): V3 {
+        if (tri.unlit) return color
         var n = n0
         if ((n dot view) < 0f) n = -n
-        val base = V3(srgbToLinear(tri.color.x), srgbToLinear(tri.color.y), srgbToLinear(tri.color.z))
+        val base = V3(srgbToLinear(color.x), srgbToLinear(color.y), srgbToLinear(color.z))
         val diff = max(0f, n dot light) * 0.95f
         val ambient = 0.45f
         val h = (light + view).normalized()

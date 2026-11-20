@@ -100,6 +100,9 @@ private fun smoothDamp(current: Float, target: Float, velocity: FloatArray, smoo
  * モジュールを上へドラッグして 3D モデルのスロット (光る丸) へドロップで取り付け/差し替え、
  * 3D モデル上のモジュールをトレイへドラッグで取り外し。
  */
+/** ドラッグ中に指を離したら起きること。 */
+enum class DropAction { None, Attach, Detach }
+
 class ModuleTrayState(private val room: HomeRoom, private val placement: ViewPlacement) : ModuleDragTarget {
     val shown = mutableStateListOf<ModuleKind>()
     var face by mutableStateOf<String?>(null)
@@ -133,6 +136,20 @@ class ModuleTrayState(private val room: HomeRoom, private val placement: ViewPla
     internal var trayBounds = Rect.Zero
     internal var carouselOrigin = Offset.Zero
     val dragging get() = ghost != null
+
+    /** いま指を離したら起きること (ドラッグ中のパーツの丸の色: 付ける = 青 / 外す = 赤 / どちらでもない = 枠なし)。 */
+    var dropAction by mutableStateOf(DropAction.None)
+        private set
+
+    /** endDrag と同じ判定で、いま離したら付くか外れるかを先に調べる。 */
+    private fun predict(window: Offset): DropAction {
+        val from = dragFrom
+        val target = targetSlot(window)
+        if (target != null && target != from) return DropAction.Attach
+        val l = placement.toLocal(window)
+        if (from != null && (trayBounds.contains(window) || (target == null && !room.isOverRobot(l.x, l.y)))) return DropAction.Detach
+        return DropAction.None
+    }
 
     val loop get() = shown.size >= 4
 
@@ -260,6 +277,7 @@ class ModuleTrayState(private val room: HomeRoom, private val placement: ViewPla
     override fun drag(window: Offset) {
         if (!dragging) return
         ghost = window
+        dropAction = predict(window)
         val over = targetSlot(window)
         if (over != hover) {
             hover = over
@@ -295,6 +313,7 @@ class ModuleTrayState(private val room: HomeRoom, private val placement: ViewPla
         } else if (target == null && placement.toLocal(window).let { room.slotAtScreen(it.x, it.y, SnapDp, null) } != null) {
             setHint("${ModuleCatalog.name(kind)}はそこには付けられません", true)
         } else setHint("")
+        dropAction = DropAction.None
         dragKind = null
         dragFrom = null
     }
@@ -302,15 +321,21 @@ class ModuleTrayState(private val room: HomeRoom, private val placement: ViewPla
 
 /** モジュールの色の枠が付いた丸いプレビュー画像。 */
 @Composable
-fun CirclePreview(kind: ModuleKind, image: ImageBitmap?, size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
+fun CirclePreview(
+    kind: ModuleKind, image: ImageBitmap?, size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier,
+    ring: Color = ModuleCatalog.tint(kind), ringWidth: androidx.compose.ui.unit.Dp = 2.dp,
+) {
     Box(
         modifier
             .size(size)
             .clip(CircleShape)
             .background(Color.White)
-            .border(2.dp, ModuleCatalog.tint(kind), CircleShape),
+            .border(ringWidth, ring, CircleShape),
+        contentAlignment = Alignment.Center,
     ) {
+        // 画像がまだないとき (着せ替えなど) はパーツのアイコン
         if (image != null) Image(image, null, Modifier.fillMaxSize())
+        else Icon(ModuleCatalog.icon(kind), size * 0.5f, ModuleCatalog.tint(kind))
     }
 }
 
@@ -554,6 +579,13 @@ fun ModuleDragGhost(state: ModuleTrayState) {
                 .offset { IntOffset((g.x - origin.x - half).roundToInt(), (g.y - origin.y - up - half).roundToInt()) }
                 .graphicsLayer { alpha = 0.95f }
                 .shadow(8.dp, CircleShape),
+            // いま離したら: 付ける = 青 / 外す = 赤 / どちらでもない = 枠なし
+            ring = when (state.dropAction) {
+                DropAction.Attach -> Color(0xff2f80ed)
+                DropAction.Detach -> Color(0xffe5484d)
+                DropAction.None -> Color.Transparent
+            },
+            ringWidth = 4.dp,
         )
     }
 }

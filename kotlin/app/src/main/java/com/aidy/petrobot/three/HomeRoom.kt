@@ -59,12 +59,14 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
         const val HoldPoseAfter = 6f     // 付け替え画面: 触ってからこの秒数は、回した向きのまま止めておく (底面などを選べるように)
         const val ZoomMin = 0.45f
         const val ZoomMax = 1.8f
+        /** ホームのお部屋 (Aidy 以外) の拡大率。大きいほど Aidy が小さく見える。 */
+        const val RoomScale = 1f // デザイン「お部屋 3パターン」の寸法どおり (本体 30cm 基準)
         private val HomeLook = V3(0f, 0.2f, 0f)
         // 着せ替え: スツールの上の Aidy をほぼ正面 (少しだけ上) から見る
-        // デザインと同じ距離感: Aidy の中心から 1050mm 手前・200mm 上 (Aidy の一辺 300mm = 1.1) から、Aidy を見る
+        // AR の付け替えと同じくらいの大きさ (横幅の約 5 割): Aidy の中心から 870mm 手前・170mm 上 (Aidy の一辺 300mm = 1.1) から見る
         private val StageLook = V3(0f, RobotBaseY + RoomDecor.StoolHeight + 0.1f, 0f)
         private const val DesignMm = BodySize / 300f // デザインの Aidy は一辺 300mm で描いてある
-        private val StageEye = V3(0f, RobotBaseY + RoomDecor.StoolHeight + 200f * DesignMm, 1050f * DesignMm)
+        private val StageEye = V3(0f, RobotBaseY + RoomDecor.StoolHeight + 170f * DesignMm, 870f * DesignMm)
     }
 
     enum class AIState { Wander, Idle, Look }
@@ -137,8 +139,10 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
     private var focusRot = V3.Zero
 
     // ズーム (カメラと注視点の距離の倍率)
-    private val homeEye = if (editable) V3(0f, 1.7f, 3.6f) else V3(0f, 2.2f, 4.2f)
-    private var camLook = HomeLook
+    // ホーム: デザイン「お部屋 3パターン」のカメラ (Aidy の立つ面から 350mm 上、Aidy の中心から 1050mm 手前で水平に見る)
+    private val homeEye = if (editable) V3(0f, 1.7f, 3.6f) else V3(0f, RoomDecor.Floor + 350f * DesignMm, 1050f * DesignMm)
+    private val homeLook = if (editable) HomeLook else V3(0f, RoomDecor.Floor + 350f * DesignMm, 0f)
+    private var camLook = homeLook
     private var camBase = homeEye
     private var zoom = 1f
     private var zoomTarget = 1f
@@ -159,7 +163,8 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
 
     init {
         // カメラ: PerspectiveCamera(45) position (0, 2.2, 4.2) lookAt (0, 0.2, 0)
-        camera.fov = { AidyCamera.homeFov(it) }
+        // 付け替えプレビューは今まで通り。ホームはデザインと同じレンズ (横の画角 約 44°)
+        camera.fov = if (editable) ({ a: Float -> AidyCamera.homeFov(a) }) else ({ a: Float -> AidyCamera.stageFov(a) })
         camera.nearPlane = 0.1f
         camera.farPlane = 1000f
         applyCamera()
@@ -183,7 +188,7 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
             wall.setLocal(V3(0f, 1.35f, -2.5f))
         } else {
             // ホーム: 家具のある部屋 (選んだお部屋)
-            decorNode = gfx.empty(root, "Decor")
+            decorNode = decorRoot(RoomPref.current)
             room = RoomPref.current
             RoomDecor(gfx, decorNode!!, room, decorMats)
         }
@@ -193,7 +198,8 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
         body = TNode(gfx.empty(robot.node, "BodyGroup")).also { it.apply() }
 
         // 本体 (顔モジュールの有無で 顔あり/顔なし) + モジュール
-        rig = ModuleRig(gfx, body.node, BodySize, editable)
+        // ホームも目印 (面のハイライト・スロットの丸) を作っておく: 着せ替えでドラッグ&ドロップに使う (ふだんは隠れている)
+        rig = ModuleRig(gfx, body.node, BodySize, true)
 
         faceOverlay = buildFaceOverlay()
         stars = buildStars()
@@ -239,11 +245,16 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
     // ------------------------------------------------------------ 面の選択 (editable: 3D モデルをタップ)
 
     /** 面を選ぶ: その面をカメラへ向けたまま止まり、面とスロットを光らせる。null で解除。 */
-    fun selectFace(face: String?) {
-        if (!editable) return
+    /**
+     * 着せ替え中は stageMode でも選べる (面のハイライトとスロットの丸を出し、その面へドラッグ&ドロップできる)。
+     * rotate: その面をカメラへ向ける (着せ替えで本体の面をタップしたときは向きを変えない)。
+     */
+    fun selectFace(face: String?, rotate: Boolean = true) {
+        if (!editable && !stageMode) return
         selectedFace = face
-        if (face != null) focusFace(face, Float.MAX_VALUE)
-        else {
+        if (face != null) {
+            if (rotate) focusFace(face, Float.MAX_VALUE)
+        } else if (!stageMode) {
             focusTimer = 0f
             aiTimer = 0.8f
         }
@@ -654,7 +665,7 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
         robot.r = robot.r.copy(y = robot.r.y + dx * 0.01f, x = robot.r.x + dy * 0.01f)
         robot.apply()
         focusTimer = 0f
-        if (selectedFace != null) selectFace(null)
+        if (selectedFace != null && !stageMode) selectFace(null) // 着せ替え中は回しても面の選択はそのまま
 
         spinAccum += (abs(dx) + abs(dy)) * 0.01f
         spinVel = dx * 0.01f
@@ -942,11 +953,23 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
 
     // ------------------------------------------------------------ お部屋・着せ替え
 
+    /**
+     * お部屋の家具を入れるノード。ホームのお部屋は Aidy の立っている点 (x, z = 0、高さ Floor) を中心に
+     * RoomScale 倍して、Aidy 以外 (テーブル・机・家具・小物) を少し大きく見せる。きせかえルームはそのまま。
+     */
+    private fun decorRoot(id: String): Node {
+        val n = gfx.empty(root, "Decor")
+        val s = if (id == RoomDecor.StageRoom) 1f else RoomScale
+        // y = Floor の面 (テーブルの天板・机の上・床) が同じ高さに残るようにずらす
+        n.setLocal(V3(0f, RoomDecor.Floor * (1f - s), 0f), Q.Identity, s)
+        return n
+    }
+
     /** お部屋を切り替える (背景の家具を作り直す)。 */
     fun setRoom(id: String) {
         if (editable || id == room) return
         decorNode?.destroyTree()
-        val n = gfx.empty(root, "Decor")
+        val n = decorRoot(id)
         decorNode = n
         room = id
         RoomDecor(gfx, n, id, decorMats)
@@ -958,6 +981,10 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
      */
     fun setStageMode(on: Boolean) {
         if (stageMode == on) return
+        if (!on && selectedFace != null) {
+            selectedFace = null
+            rig.setSelectedFace(null)
+        }
         stageMode = on
         lastTouch = now()
         recalling = false
@@ -981,8 +1008,8 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
             aiEnabled = true
             chooseNextAIState()
         }
-        camera.fov = if (on) ({ a: Float -> AidyCamera.stageFov(a) }) else ({ a: Float -> AidyCamera.homeFov(a) })
-        camLook = if (on) StageLook else HomeLook
+        camera.fov = { a: Float -> AidyCamera.stageFov(a) } // ホームも着せ替えもデザインのカメラのレンズ
+        camLook = if (on) StageLook else homeLook
         camBase = if (on) StageEye else homeEye
         zoom = 1f
         zoomTarget = 1f

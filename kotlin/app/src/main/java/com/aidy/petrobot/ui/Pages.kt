@@ -82,6 +82,9 @@ class HomeUi(val room: HomeRoom) {
 fun HomePage(ui: HomeUi, active: Boolean, onEdit: () -> Unit) {
     val scope = rememberCoroutineScope()
     var showRooms by remember { mutableStateOf(false) }
+    // 着せ替えのドラッグ&ドロップ (AR の付け替えと同じしくみ: トレイからスロットの丸へ、本体のパーツをシートへで取り外し)
+    val placement = remember { ViewPlacement() }
+    val tray = remember(ui.room) { ModuleTrayState(ui.room, placement) }
 
     fun setDressing(on: Boolean) {
         if (ui.curtain.progress.isRunning || ui.dressing == on) return
@@ -105,11 +108,13 @@ fun HomePage(ui: HomeUi, active: Boolean, onEdit: () -> Unit) {
             // 右下の丸ボタンと重ならないように、ズームボタンはその上へ
             zoomBottom = if (ui.dressing) null else (HomeButtonsBottom + HomeButtonsHeight + 14f).dp,
             zoomEnd = if (ui.dressing) 10.dp else (HomeButtonsEnd + 28f - 17f).dp,
+            tray = if (ui.dressing) tray else null,
+            placement = placement,
         )
         StatusBubble(ui.room, ui.stateText, active)
 
         if (ui.dressing) {
-            DressingOverlay(ui) { setDressing(false) }
+            DressingOverlay(ui, tray) { setDressing(false) }
         } else {
             // 右下: お部屋を変える・着せ替え (アイコンのみ)
             Column(
@@ -122,6 +127,7 @@ fun HomePage(ui: HomeUi, active: Boolean, onEdit: () -> Unit) {
             }
         }
 
+        if (ui.dressing) ModuleDragGhost(tray) // ドラッグ中のパーツ (指の少し上)
         CurtainOverlay(ui.curtain)
     }
     if (showRooms) RoomPickerSheet(ui.room) { showRooms = false }

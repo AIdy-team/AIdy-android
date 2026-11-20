@@ -79,7 +79,7 @@ private fun coachSteps() = listOf(
         waitFor = "rotate", praise = "くるくる〜。上手に回せたね！", needs = "home", gesture = CoachGesture.Swipe,
     ),
     CoachStep(
-        "ぼくの色を変えてみよう！ 右下のシャツのボタンで着せ替えを開いて、「色」タブで好きな色をタップしてね。", "color", PageHome,
+        "ぼくの色を変えてみよう！ 右下のシャツのボタンで着せ替えを開いて、「カラー」タブで好きな色をタップしてね。", "color", PageHome,
         waitFor = "colorSet", praise = "すてきな色！ ありがとう！ 着せ替えは右上の「できた！」で終われるよ。", needs = "home",
     ),
     // ---- 日記
