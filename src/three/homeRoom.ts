@@ -4,6 +4,7 @@ import { Meshes } from "./meshes";
 import { lit, unlit, meshFrom, emptyGroup } from "./gfx";
 import { AidyCamera } from "./camera";
 import { ModuleRig } from "./rig";
+import { RoomDecor } from "./roomDecor";
 import { BodyLayout, ModuleConfig, ModuleKind, ModuleCatalog } from "../data/modules";
 import type { AidyFace } from "../components/mascot";
 
@@ -91,6 +92,7 @@ export class HomeRoom {
   private readonly zNodes: Array<{ mesh: THREE.Mesh; mat: THREE.MeshStandardMaterial }> = [];
 
   private focusTimer = 0;
+  private recalling = false;
   private focusRot: V3 = V3.Zero;
 
   private readonly camLook = new V3(0, 0.2, 0);
@@ -111,23 +113,28 @@ export class HomeRoom {
     this.light.castShadow = true;
     this.root.add(this.light);
 
-    // 床・ラグ・壁
-    const floor = meshFrom(Meshes.plane(8, 8), lit(0xffe2e8f0, 0, 0.4), "Floor");
-    floor.position.set(0, -0.65, 0);
-    floor.quaternion.copy(Q.euler(-PI / 2, 0, 0).toThree());
-    floor.receiveShadow = true;
-    this.root.add(floor);
+    if (editable) {
+      // 付け替えプレビュー: シンプルな床・ラグ・壁
+      const floor = meshFrom(Meshes.plane(8, 8), lit(0xffe2e8f0, 0, 0.4), "Floor");
+      floor.position.set(0, -0.65, 0);
+      floor.quaternion.copy(Q.euler(-PI / 2, 0, 0).toThree());
+      floor.receiveShadow = true;
+      this.root.add(floor);
 
-    const rug = meshFrom(Meshes.circle(1.6, 32), lit(editable ? 0xffe0e7ff : 0xffdbeafe, 0, 0.8), "Rug");
-    rug.position.set(0, -0.64, 0);
-    rug.quaternion.copy(Q.euler(-PI / 2, 0, 0).toThree());
-    rug.receiveShadow = true;
-    this.root.add(rug);
+      const rug = meshFrom(Meshes.circle(1.6, 32), lit(0xffe0e7ff, 0, 0.8), "Rug");
+      rug.position.set(0, -0.64, 0);
+      rug.quaternion.copy(Q.euler(-PI / 2, 0, 0).toThree());
+      rug.receiveShadow = true;
+      this.root.add(rug);
 
-    const wall = meshFrom(Meshes.plane(8, 4), lit(0xfff8fafc, 0, 0.9), "Wall");
-    wall.position.set(0, 1.35, -2.5);
-    wall.receiveShadow = true;
-    this.root.add(wall);
+      const wall = meshFrom(Meshes.plane(8, 4), lit(0xfff8fafc, 0, 0.9), "Wall");
+      wall.position.set(0, 1.35, -2.5);
+      wall.receiveShadow = true;
+      this.root.add(wall);
+    } else {
+      // ホーム: 家具のある部屋
+      new RoomDecor(this.root);
+    }
 
     // ロボットモデルアセンブリ
     const robotGroup = emptyGroup("RobotGroup");
@@ -154,6 +161,7 @@ export class HomeRoom {
   destroy(): void {
     const idx = ModuleConfig.changed.indexOf(this.moduleListener);
     if (idx >= 0) ModuleConfig.changed.splice(idx, 1);
+    this.rig.release();
   }
 
   private moduleListener = (slot: string, removed: ModuleKind | null, added: ModuleKind | null) => {
@@ -202,9 +210,12 @@ export class HomeRoom {
     const face = this.pickFace(x, y);
     if (!this.editable) {
       if (face != null) this.petRobotDirectly();
+      else if (this.moduleAtScreen(x, y, 0) == null) this.recall();
       return;
     }
     if (face == null) {
+      // 面を選択中は、ほかの面のパーツのタップには反応しない
+      if (this.selectedFace != null && this.moduleAtScreen(x, y, 8) != null) return;
       if (this.selectedFace != null) {
         this.selectFace(null);
         this.onStatus("面の選択を解除しました");
@@ -260,7 +271,7 @@ export class HomeRoom {
       const n = axis === 0 ? new V3(side, 0, 0) : axis === 1 ? new V3(0, side, 0) : new V3(0, 0, side);
       for (const f of BodyLayout.Faces) if (BodyLayout.faceNormal(f).dot(n) > 0.9) return f;
     }
-    const slot = this.slotAtScreen(x, y, 70, (s) => ModuleConfig.at(s.id) != null, false, false);
+    const slot = this.moduleAtScreen(x, y, 8, true) ?? this.slotAtScreen(x, y, 70, (s) => ModuleConfig.at(s.id) != null, false);
     return slot ? (BodyLayout.get(slot)?.face ?? null) : null;
   }
 
@@ -299,6 +310,97 @@ export class HomeRoom {
 
   private camEye(): V3 {
     return this.camera.eye;
+  }
+
+  /**
+   * 画面上で指が重なっている取り付け済みモジュール (見た目の外形を画面に写した四角 + marginDp の余白)。
+   * onlySelected なら選択中の面のモジュールだけ (面を選んでいなければ全部)。重なっているときは手前のものを選ぶ。
+   */
+  moduleAtScreen(x: number, y: number, marginDp = 18, onlySelected = false): string | null {
+    const margin = marginDp * this.density;
+    const bw = this.bodyWorld();
+    let hit: string | null = null;
+    let bestScore = Infinity;
+    for (const fr of this.rig.frameList) {
+      if (onlySelected && this.selectedFace != null && fr.slot.face !== this.selectedFace) continue;
+      const hull = this.rig.hullOf(fr.slot.id);
+      if (hull.length === 0) continue;
+      const sw = bw.combine(new Pose(fr.slot.position.scale(BodySize), fr.slot.mountRotation));
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      let zSum = 0;
+      let n = 0;
+      for (const v of hull) {
+        const sp = this.camera.worldToScreen(sw.point(v));
+        if (sp.z <= 0) continue;
+        x0 = Math.min(x0, sp.x); y0 = Math.min(y0, sp.y); x1 = Math.max(x1, sp.x); y1 = Math.max(y1, sp.y);
+        zSum += sp.z;
+        n++;
+      }
+      if (n === 0) continue;
+      // 小さいモジュールは指で押さえにくいので、最低でも 44dp 角の当たりにする
+      const minHalf = 22 * this.density;
+      const cx = (x0 + x1) * 0.5;
+      const cy = (y0 + y1) * 0.5;
+      const hx = Math.max((x1 - x0) * 0.5, minHalf) + margin;
+      const hy = Math.max((y1 - y0) * 0.5, minHalf) + margin;
+      if (Math.abs(x - cx) > hx || Math.abs(y - cy) > hy) continue;
+      // 手前 (奥行きが小さい) を優先。同じくらいなら中心に近いほう
+      const score = zSum / n + (0.002 * Math.hypot(x - cx, y - cy)) / this.density;
+      if (score < bestScore) {
+        bestScore = score;
+        hit = fr.slot.id;
+      }
+    }
+    return hit;
+  }
+
+  /** 画面のその位置に Aidy (本体の箱かモジュール) があるか。 */
+  isOverRobot(x: number, y: number): boolean {
+    return this.pickFace(x, y) != null || this.moduleAtScreen(x, y, 0) != null;
+  }
+
+  /** 床をタップ: 真ん中へ戻ってくる (お散歩のオン・オフに関係なく)。 */
+  recall(): void {
+    const d = Math.hypot(this.robot.p.x, this.robot.p.z);
+    if (d < 0.08) {
+      this.startReaction("Bob", 0.5, "ここにいるよ！", "Happy");
+      return;
+    }
+    this.recalling = true;
+    this.aiState = "Idle";
+    this.onStatus("呼ばれた！ 戻るね");
+  }
+
+  private tickRecall(): void {
+    let dir = new V3(-this.robot.p.x, 0, -this.robot.p.z);
+    const dist = dir.length;
+    if (dist > 0.04) {
+      dir = dir.normalized();
+      this.robot.p = this.robot.p.add(dir.scale(Math.min(MoveSpeed * 1.8, dist)));
+      this.turnToward(Math.atan2(dir.x, dir.z), 0.18);
+      this.animTime += 0.24;
+      this.rig.swingLegs(0.5, this.animTime);
+      this.rig.waveHands(Math.sin(this.animTime) * 0.2);
+      this.body.p = new V3(this.body.p.x, Math.abs(Math.sin(this.animTime * 2)) * (this.rig.hasLegs ? 0.06 : 0.1), this.body.p.z);
+    } else {
+      this.robot.p = new V3(0, this.robot.p.y, 0);
+      this.turnToward(0, 0.2); // カメラの方を向く
+      this.rig.swingLegs(0, 0);
+      if (Math.abs(this.robot.r.y) < 0.05) {
+        this.recalling = false;
+        this.aiState = "Idle";
+        this.aiTimer = 8; // しばらく真ん中にいる
+        this.startReaction("Bob", 0.6, "ただいま！", "Happy");
+      }
+    }
+  }
+
+  /** 向き (y 回転) を一番近い回り方で target に寄せる。 */
+  private turnToward(target: number, k: number): void {
+    let d = (target - this.robot.r.y) % (PI * 2);
+    if (d > PI) d -= PI * 2;
+    if (d < -PI) d += PI * 2;
+    this.robot.r = new V3(this.robot.r.x, this.robot.r.y + d * k, this.robot.r.z);
   }
 
   /** ドラッグ中のモジュール (null で終了) と、いま指が重なっているスロット。目印の色を変える。 */
@@ -588,6 +690,8 @@ export class HomeRoom {
       this.robot.p = V3.lerp(this.robot.p, new V3(0, this.robot.p.y, 0), 0.08);
       this.rig.swingLegs(0, 0);
       if (this.focusTimer <= 0) this.aiTimer = 0.5;
+    } else if (this.recalling && !this.draggingModel) {
+      this.tickRecall();
     } else if (this.aiEnabled && !this.draggingModel) {
       this.tickAI(dt);
     } else if (!this.draggingModel) {

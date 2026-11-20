@@ -8,18 +8,18 @@ import { Prefs } from "./src/data/prefs";
 import { DiaryDemo } from "./src/data/diary";
 
 export default function App() {
-  const [ready, setReady] = useState(false);
-  const [app] = useState(() => new AppState());
+  // 保存データ (着せ替え・色など) を読み終えてから 3D の状態を作る (先に作ると標準構成で上書きしてしまう)
+  const [app, setApp] = useState<AppState | null>(null);
 
   useEffect(() => {
     (async () => {
       await Prefs.preload();
       await DiaryDemo.seedIfNeeded();
-      setReady(true);
+      setApp(new AppState());
     })();
   }, []);
 
-  if (!ready) return null;
+  if (!app) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

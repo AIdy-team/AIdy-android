@@ -1,10 +1,24 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, ScrollView, TextInput, View } from "react-native";
+import { AppState, Pressable, ScrollView, TextInput, View } from "react-native";
 import { Theme } from "../components/theme";
 import { Icon } from "../components/icons";
 import { Label, Pressed, boxStyle } from "../components/widgets";
 import { AidyMascot, AidyFace, MascotState } from "../components/mascot";
-import { ChatLine, DiaryComposer, DiaryEntry, DiaryStore, ScheduleItem, ScheduleStore, addDays, dateKey, CalendarSettings } from "../data/diary";
+import {
+  AidyDeviceLink,
+  ChatLine,
+  DiaryComposer,
+  DiaryEntry,
+  DiaryStore,
+  ScheduleItem,
+  ScheduleStore,
+  WeekDay,
+  addDays,
+  dateKey,
+  CalendarSettings,
+} from "../data/diary";
+
+const SyncDays = 7;
 
 const MaxChips = 3;
 const CellHeight = 50;
@@ -15,6 +29,8 @@ const Saturday = Theme.Primary;
 const Amber = Theme.hex(0xf59e0b);
 const ChipBg = Theme.hex(0xfef3c7);
 const ChipFg = Theme.hex(0xb45309);
+const PhoneChipBg = Theme.hex(0xe0e7ff);
+const PhoneChipFg = Theme.hex(0x4338ca);
 const Danger = Theme.hex(0xef4444);
 
 function startOfWeek(d: Date): Date {
@@ -73,11 +89,14 @@ export function DiaryPage({ active }: { active: boolean }) {
   return <DiaryPageContent active={active} />;
 }
 
-/** 月/週カレンダー(日記のある日にミニAidy、予定のある日にタイトル) + 選択日の日記カード + 予定カード。本体との同期は含まない。 */
+/**
+ * 月/週カレンダー (日記のある日にミニAidy、予定のある日にタイトル、本体にだけ会話がある日に点) + 本体の今週の予定
+ * + 選択日の日記カード + 予定カード。初めて開いたときに本体と自動で同期する (DiaryPage.kt のポート)。
+ */
 function DiaryPageContent({ active }: { active: boolean }) {
-  const [weekView, setWeekView] = useState(CalendarSettings.weekView);
+  const [weekView, setWeekViewState] = useState(CalendarSettings.weekView);
   useEffect(() => {
-    if (active) setWeekView(CalendarSettings.weekView);
+    if (active) setWeekViewState(CalendarSettings.weekView);
   }, [active]);
 
   const today = new Date();
@@ -97,20 +116,84 @@ function DiaryPageContent({ active }: { active: boolean }) {
   const [scheduleByDate, setScheduleByDate] = useState<Map<string, ScheduleItem[]>>(new Map());
   const reloadSchedule = useCallback(async () => {
     const dates = weeks.flat().filter((d): d is Date => d != null);
-    const pairs = await Promise.all(dates.map(async (d) => [dateKey(d), await ScheduleStore.forDate(d)] as const));
-    setScheduleByDate(new Map(pairs));
+    setScheduleByDate(await ScheduleStore.forDates(dates));
   }, [weeks]);
 
   useEffect(() => {
     void reloadEntries();
   }, [reloadEntries]);
+  // iPhone のカレンダー側の変更を拾うため、タブを開いたときとアプリに戻ってきたときにも読み直す。
   useEffect(() => {
+    if (!active) return;
     void reloadSchedule();
-  }, [reloadSchedule]);
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s === "active") void reloadSchedule();
+    });
+    return () => sub.remove();
+  }, [active, reloadSchedule]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
+
+  // ---- 本体との同期 (会話ログ → 日記、/api/week の今週の予定、/api/days の会話がある日)
+  const [syncing, setSyncing] = useState(false);
+  const [syncText, setSyncText] = useState(AidyDeviceLink.lastSyncLabel);
+  const [deviceWeekDays, setDeviceWeekDays] = useState<WeekDay[]>([]);
+  const [deviceWeekStatus, setDeviceWeekStatus] = useState("「同期」を押すと本体の今週の予定を取得します");
+  const [deviceDays, setDeviceDays] = useState<Set<string>>(new Set());
+  const syncingRef = useRef(false);
+  const autoSynced = useRef(false);
+
+  const startSync = useCallback(
+    (silent: boolean) => {
+      if (syncingRef.current) return;
+      syncingRef.current = true;
+      setSyncing(true);
+      headerMascot.react("Surprised", 0.6);
+      void (async () => {
+        const r = await AidyDeviceLink.syncRecent(SyncDays);
+        syncingRef.current = false;
+        setSyncing(false);
+        setSyncText(r.ok || !silent ? r.message : "未接続 ・ " + AidyDeviceLink.lastSyncLabel);
+        headerMascot.react(r.ok ? "Happy" : "Sleepy", 1.6);
+        if (r.updated > 0) await reloadEntries();
+      })();
+      void (async () => {
+        const w = await AidyDeviceLink.fetchWeek();
+        if (w.ok) {
+          setDeviceWeekDays(w.days);
+          if (w.synced > 0) {
+            const d = new Date(w.synced * 1000);
+            const pad = (n: number) => String(n).padStart(2, "0");
+            setDeviceWeekStatus(`Googleカレンダー同期: ${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`);
+          } else setDeviceWeekStatus("本体がGoogleカレンダーにまだつながっていません");
+        } else setDeviceWeekStatus(w.error ?? "本体からの返事を読み取れませんでした");
+      })();
+      void (async () => {
+        const d = await AidyDeviceLink.fetchDays();
+        if (d.ok) setDeviceDays(d.days);
+      })();
+    },
+    [headerMascot, reloadEntries],
+  );
+
+  // ページが表示されたとき。初回だけ本体と自動同期する
+  useEffect(() => {
+    if (active && !autoSynced.current) {
+      autoSynced.current = true;
+      startSync(true);
+    }
+  }, [active, startSync]);
+
+  /** 月表示/週表示を切り替える (カレンダー上のボタン・設定画面)。端末に覚えておく。 */
+  const applyWeekView = (on: boolean) => {
+    if (weekView === on) return;
+    setWeekViewState(on);
+    CalendarSettings.weekView = on;
+    setMonth(startOfMonth(selected));
+    setWeekAnchor(startOfWeek(selected));
+  };
 
   const select = (d: Date) => {
     if (dateKey(d) !== dateKey(selected)) {
@@ -142,10 +225,21 @@ function DiaryPageContent({ active }: { active: boolean }) {
         <AidyMascot size={44} face="Normal" state={headerMascot} interactive />
         <View style={{ flex: 1, gap: 2 }}>
           <Label text="Aidyの日記" size={18} color={Theme.TextMain} bold />
+          <Label text={syncText} size={11} color={Theme.TextSub} />
         </View>
+        <Pressed
+          onPress={() => startSync(false)}
+          pressScale={0.95}
+          style={[boxStyle(Theme.PrimaryLight, 16, 0, Theme.hex(0xbfdbfe)), { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 8 }]}
+        >
+          <Icon icon="Wifi" size={12} color={Theme.Primary} />
+          <Label text={syncing ? "同期中…" : "同期"} size={12} color={Theme.Primary} bold />
+        </Pressed>
       </View>
 
       <View style={{ height: 14 }} />
+      <CalendarModeToggle weekView={weekView} onChange={applyWeekView} />
+      <View style={{ height: 8 }} />
       <CalendarCard
         monthLabel={monthLabel}
         weeks={weeks}
@@ -153,16 +247,20 @@ function DiaryPageContent({ active }: { active: boolean }) {
         today={today}
         entries={entries}
         scheduleByDate={scheduleByDate}
+        deviceDays={deviceDays}
         onPrev={() => shiftPeriod(-1)}
         onNext={() => shiftPeriod(1)}
         onSelect={select}
       />
 
       <View style={{ height: 12 }} />
+      <DeviceWeekCard status={deviceWeekStatus} days={deviceWeekDays} />
+
+      <View style={{ height: 12 }} />
       {entry ? (
         <DiaryEntryCard entry={entry} selected={selected} logsOpen={logsOpen} onToggleLogs={() => setLogsOpen((v) => !v)} />
       ) : (
-        <EmptyEntryCard selected={selected} today={today} />
+        <EmptyEntryCard selected={selected} today={today} onFetch={() => startSync(false)} />
       )}
 
       <View style={{ height: 12 }} />
@@ -200,6 +298,7 @@ function CalendarCard({
   today,
   entries,
   scheduleByDate,
+  deviceDays,
   onPrev,
   onNext,
   onSelect,
@@ -210,6 +309,7 @@ function CalendarCard({
   today: Date;
   entries: Map<string, DiaryEntry>;
   scheduleByDate: Map<string, ScheduleItem[]>;
+  deviceDays: Set<string>;
   onPrev: () => void;
   onNext: () => void;
   onSelect: (d: Date) => void;
@@ -247,6 +347,7 @@ function CalendarCard({
                 today={today}
                 entry={d ? entries.get(dateKey(d)) : undefined}
                 schedule={d ? scheduleByDate.get(dateKey(d)) ?? [] : []}
+                onDevice={d != null && deviceDays.has(dateKey(d))}
                 onSelect={onSelect}
               />
             ))}
@@ -276,6 +377,7 @@ function DayCellView({
   today,
   entry,
   schedule,
+  onDevice,
   onSelect,
 }: {
   date: Date | null;
@@ -283,6 +385,8 @@ function DayCellView({
   today: Date;
   entry: DiaryEntry | undefined;
   schedule: ScheduleItem[];
+  /** 本体にはあるがまだ同期していない会話がある日 (/api/days)。同期すると日記になる。 */
+  onDevice: boolean;
   onSelect: (d: Date) => void;
 }) {
   if (!date) return <View style={{ flex: 1 }} />;
@@ -317,9 +421,10 @@ function DayCellView({
           </View>
         ) : (
           <View style={{ width: "100%", paddingHorizontal: 3, gap: 2, marginTop: 2 }}>
+            {onDevice && shown === 0 && <View style={{ alignSelf: "center", marginTop: 6, width: 6, height: 6, borderRadius: 3, backgroundColor: Theme.Slate300 }} />}
             {schedule.slice(0, shown).map((it) => (
-              <View key={it.id} style={{ backgroundColor: ChipBg, borderRadius: 4, paddingHorizontal: 3, paddingVertical: 1 }}>
-                <Label text={it.title} size={8} color={ChipFg} bold maxLines={1} />
+              <View key={it.id} style={{ backgroundColor: it.fromPhone ? PhoneChipBg : ChipBg, borderRadius: 4, paddingHorizontal: 3, paddingVertical: 1 }}>
+                <Label text={it.title} size={8} color={it.fromPhone ? PhoneChipFg : ChipFg} bold maxLines={1} />
               </View>
             ))}
           </View>
@@ -406,7 +511,7 @@ function ChatRow({ line }: { line: ChatLine }) {
   );
 }
 
-function EmptyEntryCard({ selected, today }: { selected: Date; today: Date }) {
+function EmptyEntryCard({ selected, today, onFetch }: { selected: Date; today: Date; onFetch: () => void }) {
   const future = selected.getTime() > today.getTime() && dateKey(selected) !== dateKey(today);
   const isToday = dateKey(selected) === dateKey(today);
   const face: AidyFace = future ? "Normal" : "Sleepy";
@@ -420,6 +525,105 @@ function EmptyEntryCard({ selected, today }: { selected: Date; today: Date }) {
       <Label text={dateLabel(selected)} size={12} color={Theme.TextSub} bold align="center" />
       <Label text={main} size={15} color={Theme.TextMain} bold align="center" />
       <Label text={sub} size={12} color={Theme.TextSub} align="center" />
+      {isToday && (
+        <View style={{ marginTop: 8 }}>
+          <Pressed
+            onPress={onFetch}
+            pressScale={0.96}
+            style={[boxStyle(Theme.Primary, 20, 4), { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 18, paddingVertical: 10 }]}
+          >
+            <Icon icon="Wifi" size={12} color="#fff" />
+            <Label text="Aidyから会話ログを受け取る" size={13} color="#fff" bold />
+          </Pressed>
+        </View>
+      )}
+    </View>
+  );
+}
+
+/** カレンダーの上: 月表示 / 週表示の切り替え (アイコン付きの 2 つ割りボタン)。 */
+function CalendarModeToggle({ weekView, onChange }: { weekView: boolean; onChange: (week: boolean) => void }) {
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center" }}>
+      <Label text="カレンダー" size={13} color={Theme.TextSub} bold style={{ flex: 1, paddingLeft: 4 }} />
+      <View style={{ flexDirection: "row", backgroundColor: Theme.Slate100, borderRadius: 18, padding: 3 }}>
+        {[false, true].map((week) => {
+          const on = weekView === week;
+          const color = on ? Theme.Primary : Theme.Slate400;
+          return (
+            <Pressed
+              key={String(week)}
+              onPress={() => onChange(week)}
+              pressScale={0.95}
+              style={[boxStyle(on ? "#fff" : "transparent", 15, on ? 2 : 0), { height: 32, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12 }]}
+            >
+              <CalendarGlyph week={week} color={color} />
+              <Label text={week ? "週" : "月"} size={12} color={on ? Theme.Primary : Theme.Slate600} bold />
+            </Pressed>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+/** カレンダーの絵: 月 = 3 段のマス、週 = 1 段のマス。 */
+function CalendarGlyph({ week, color }: { week: boolean; color: string }) {
+  const w = 16;
+  const rows = week ? 1 : 3;
+  const cell = w * 0.13;
+  const cells: React.ReactNode[] = [];
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < 4; c++)
+      cells.push(
+        <View
+          key={`${r}-${c}`}
+          style={{
+            position: "absolute",
+            left: w * 0.16 + c * w * 0.19 - 0.75,
+            top: (week ? w * 0.55 : w * 0.42 + r * w * 0.16) - w * 0.14 - 0.75,
+            width: cell,
+            height: cell * (week ? 1.6 : 0.8),
+            backgroundColor: color,
+          }}
+        />,
+      );
+  return (
+    <View style={{ width: w, height: w }}>
+      <View style={{ position: "absolute", left: 0, top: w * 0.14, width: w, height: w * 0.82, borderRadius: w * 0.15, borderWidth: 1.5, borderColor: color, overflow: "hidden" }}>
+        <View style={{ height: w * 0.18, backgroundColor: color }} />
+        {cells}
+      </View>
+    </View>
+  );
+}
+
+/** 本体 (Google カレンダーの控え + 本体のやることリスト) と同期する今週の予定。書き込みはまだない。 */
+function DeviceWeekCard({ status, days }: { status: string; days: WeekDay[] }) {
+  return (
+    <View style={[cardStyle(), { paddingHorizontal: 14, paddingVertical: 12, gap: 8 }]}>
+      <Label text="今週の予定（本体と同期）" size={13} color={Theme.TextMain} bold />
+      <Label text={status} size={11} color={Theme.TextSub} />
+      {days.length === 0 ? (
+        <Label text="予定はありませんでした" size={12} color={Theme.Slate400} />
+      ) : (
+        days.map((d, i) => <DeviceWeekRow key={d.date + i} day={d} />)
+      )}
+    </View>
+  );
+}
+
+function DeviceWeekRow({ day }: { day: WeekDay }) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day.date);
+  const label = m ? (() => {
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return `${d.getMonth() + 1}/${d.getDate()}（${WeekLabels[d.getDay()]}）`;
+  })() : day.date;
+  const parts = [...day.events.map((e) => `${e.time} ${e.title}`), ...day.todo.map((t) => `${t.label} ${t.text}`)];
+  return (
+    <View style={{ flexDirection: "row", gap: 8 }}>
+      <Label text={label} size={12} color={Theme.TextMain} bold style={{ minWidth: 56 }} />
+      <Label text={parts.length > 0 ? parts.join(" ・ ") : "予定なし"} size={12} color={parts.length > 0 ? Theme.TextMain : Theme.Slate400} style={{ flex: 1 }} />
     </View>
   );
 }
@@ -492,7 +696,7 @@ function ScheduleCard({
               }}
             />
           ) : (
-            <ScheduleRow item={item} onPress={() => onOpenEditor(item.id)} />
+            <ScheduleRow item={item} onPress={item.fromPhone ? undefined : () => onOpenEditor(item.id)} />
           )}
         </View>
       ))}
@@ -518,16 +722,24 @@ function ScheduleCard({
   );
 }
 
-function ScheduleRow({ item, onPress }: { item: ScheduleItem; onPress: () => void }) {
+/** onPress がない (= iPhone のカレンダーから読み込んだ) 予定は編集できないので、押せない行にする。 */
+function ScheduleRow({ item, onPress }: { item: ScheduleItem; onPress?: () => void }) {
   const past = item.isPast(new Date());
-  return (
-    <Pressed onPress={onPress} pressScale={0.98} style={[boxStyle(Theme.Slate100, 12), { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 10, gap: 10 }]}>
+  const rowStyle = [boxStyle(Theme.Slate100, 12), { flexDirection: "row" as const, alignItems: "center" as const, paddingHorizontal: 12, paddingVertical: 10, gap: 10 }];
+  const content = (
+    <>
       <Label text={item.allDay ? "終日" : item.time} size={12} bold color={past ? Theme.Slate400 : item.allDay ? Amber : Theme.Primary} style={{ width: 44 }} />
       <View style={{ flex: 1, gap: 2 }}>
         <Label text={item.title} size={13} color={Theme.TextMain} bold />
         {item.memo.length > 0 && <Label text={item.memo} size={11} color={Theme.TextSub} />}
       </View>
-      <Label text="編集" size={11} color={Theme.Slate400} />
+      {onPress ? <Label text="編集" size={11} color={Theme.Slate400} /> : <Pill text="iPhone" bg={PhoneChipBg} fg={PhoneChipFg} />}
+    </>
+  );
+  if (!onPress) return <View style={rowStyle}>{content}</View>;
+  return (
+    <Pressed onPress={onPress} pressScale={0.98} style={rowStyle}>
+      {content}
     </Pressed>
   );
 }

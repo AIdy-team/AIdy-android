@@ -10,7 +10,7 @@ const Glyph: Record<IconId, string> = {
   Snowflake: "❄", Lightbulb: "💡", Plug: "🔌", Video: "🎥", Microchip: "🔧", Plus: "+",
   Crosshairs: "✛", HandPointer: "☝", Circle: "●", Wifi: "📶", MapPin: "📍", Aidy: "A",
   Book: "📖", Ear: "👂", Tail: "〜", Leg: "🦵", Hand: "✋", Flashlight: "🔦", Battery: "🔋",
-  Trash: "🗑",
+  Trash: "🗑", Hat: "🎩",
 };
 
 export function Icon({ icon, size, color }: { icon: IconId; size: number; color: string }) {

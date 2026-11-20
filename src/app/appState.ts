@@ -69,6 +69,13 @@ export class ARPageUi {
     void this.room.reportModelState();
   }
 
+  /** カメラ AR (true) と画面上の付け替え (false) を切り替える。 */
+  setArMode(on: boolean): void {
+    if (this.arMode === on) return;
+    this.arMode = on;
+    this.notify();
+  }
+
   subscribe(l: () => void): () => void {
     this.listeners.push(l);
     return () => {

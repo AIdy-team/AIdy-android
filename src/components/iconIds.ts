@@ -32,4 +32,5 @@ export type IconId =
   | "Hand"
   | "Flashlight"
   | "Battery"
-  | "Trash";
+  | "Trash"
+  | "Hat";

@@ -1,113 +1,146 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Animated, StyleSheet, View } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import React, { useEffect, useRef, useState } from "react";
+import { StyleSheet, View } from "react-native";
 import { Theme } from "../components/theme";
-import { Icon } from "../components/icons";
-import { Label, boxStyle } from "../components/widgets";
+import { SmallButton } from "../components/widgets";
+import { ArCameraView } from "../components/arCamera";
 import { View3D, ModuleDragTarget } from "../components/View3D";
+import { ModuleDragGhost, ModuleTray } from "../components/moduleTray";
 import { ARPageUi } from "../app/appState";
 import { BodyLayout, ModuleCatalog, ModuleConfig, ModuleKind } from "../data/modules";
 
-const SlotPickDp = 45;
-const TrayHeight = 92;
+const SnapDp = 60; // ドロップ先スロットの吸着距離
+const TrayHeight = 164;
 const TrayMargin = 12;
-const GhostSize = 48;
 
-/** AR 画面。画面上プレビューでのモジュール付け替え (Phase 3) を実装。カメラAR (Phase 6/7) はスタブのまま。 */
-export function ARPage({ ui, active, onMarkerButton }: { ui: ARPageUi; active: boolean; onMarkerButton: () => void }) {
+interface Drag {
+  kind: ModuleKind;
+  /** 3D モデル上のモジュールをつかんだときのスロット (トレイからなら null)。 */
+  from: string | null;
+  hover: string | null;
+}
+
+/**
+ * AR 画面。
+ *  「画面上」: 3D プレビューで面をタップ → 下のトレイからモジュールをドラッグして付け替え。
+ *  「カメラAR」: ViroReact で、床・机に置く / 印刷したマーカーの上に出す (arCamera.tsx)。
+ */
+export function ARPage({
+  ui,
+  active,
+  onMarkerButton,
+  onPagerLock,
+}: {
+  ui: ARPageUi;
+  active: boolean;
+  onMarkerButton: () => void;
+  onPagerLock?: (locked: boolean) => void;
+}) {
   void onMarkerButton;
   const [, setTick] = useState(0);
   useEffect(() => ui.subscribe(() => setTick((t) => t + 1)), [ui]);
 
   const room = ui.room;
   const viewOrigin = useRef({ x: 0, y: 0 });
-  const trayRef = useRef<React.ComponentRef<typeof View>>(null);
-  const trayTop = useRef(Number.MAX_VALUE);
-  const dragging = useRef<{ kind: ModuleKind; fromSlot: string | null } | null>(null);
+  const trayRect = useRef({ x: 0, y: Number.MAX_VALUE, width: 0, height: 0 });
+  const dragRef = useRef<Drag | null>(null);
+  const [drag, setDrag] = useState<{ kind: ModuleKind; from: string | null } | null>(null);
+  const [ghost, setGhost] = useState<{ x: number; y: number } | null>(null);
+  const [hint, setHintText] = useState("");
+  const [hintError, setHintError] = useState(false);
 
-  const [ghostKind, setGhostKind] = useState<ModuleKind | null>(null);
-  const ghostVisible = useRef(new Animated.Value(0)).current;
-  const ghostX = useRef(new Animated.Value(0)).current;
-  const ghostY = useRef(new Animated.Value(0)).current;
+  const setHint = (text: string, error = false) => {
+    setHintText(text);
+    setHintError(error);
+  };
 
-  const moveGhost = useCallback(
-    (x: number, y: number) => {
-      ghostX.setValue(x - viewOrigin.current.x - GhostSize / 2);
-      ghostY.setValue(y - viewOrigin.current.y - GhostSize / 2);
-    },
-    [ghostX, ghostY],
-  );
+  const toLocal = (x: number, y: number) => ({ x: x - viewOrigin.current.x, y: y - viewOrigin.current.y });
 
-  const hoverSlotAt = useCallback(
-    (kind: ModuleKind, x: number, y: number): string | null => {
-      if (y >= trayTop.current) return null;
-      const local = { x: x - viewOrigin.current.x, y: y - viewOrigin.current.y };
-      return room.slotAtScreen(local.x, local.y, SlotPickDp, (s) => ModuleCatalog.fits(kind, s));
-    },
-    [room],
-  );
+  const targetSlot = (kind: ModuleKind, x: number, y: number): string | null => {
+    const l = toLocal(x, y);
+    return room.slotAtScreen(l.x, l.y, SnapDp, (s) => ModuleCatalog.fits(kind, s));
+  };
 
-  const beginDragging = useCallback(
-    (kind: ModuleKind, fromSlot: string | null, x: number, y: number) => {
-      dragging.current = { kind, fromSlot };
-      setGhostKind(kind);
-      moveGhost(x, y);
-      Animated.timing(ghostVisible, { toValue: 1, duration: 120, useNativeDriver: true }).start();
-      room.setDropState(kind, hoverSlotAt(kind, x, y));
-    },
-    [room, moveGhost, ghostVisible, hoverSlotAt],
-  );
+  const overTray = (x: number, y: number) => {
+    const r = trayRect.current;
+    return x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height;
+  };
 
-  const updateDragging = useCallback(
-    (x: number, y: number) => {
-      const d = dragging.current;
-      if (!d) return;
-      moveGhost(x, y);
-      room.setDropState(d.kind, hoverSlotAt(d.kind, x, y));
-    },
-    [room, moveGhost, hoverSlotAt],
-  );
+  const beginDrag = (kind: ModuleKind, fromSlot: string | null, x: number, y: number) => {
+    if (fromSlot == null && room.selectedFace == null) {
+      setHint(`先に3Dモデルの面をタップしてね (${ModuleCatalog.name(kind)}を付ける場所)`, true);
+      return;
+    }
+    dragRef.current = { kind, from: fromSlot, hover: null };
+    setDrag({ kind, from: fromSlot });
+    room.setDropState(kind, null);
+    setHint(fromSlot != null ? "別のスロットへ移動 / Aidyの外かトレイで離すと取り外し" : `${ModuleCatalog.name(kind)}を光っている丸へ`);
+    moveDrag(x, y);
+  };
 
-  const endDragging = useCallback(
-    (x: number, y: number) => {
-      const d = dragging.current;
-      dragging.current = null;
-      Animated.timing(ghostVisible, { toValue: 0, duration: 120, useNativeDriver: true }).start();
-      room.setDropState(null, null);
-      if (!d) return;
-      const hover = hoverSlotAt(d.kind, x, y);
-      if (hover == null) {
-        if (d.fromSlot) ModuleConfig.detach(d.fromSlot);
-        return;
+  const moveDrag = (x: number, y: number) => {
+    const d = dragRef.current;
+    if (!d) return;
+    setGhost(toLocal(x, y));
+    const over = targetSlot(d.kind, x, y);
+    if (over !== d.hover) {
+      d.hover = over;
+      room.setDropState(d.kind, over);
+    }
+  };
+
+  const endDrag = (x: number, y: number) => {
+    const d = dragRef.current;
+    if (!d) return;
+    dragRef.current = null;
+    setDrag(null);
+    setGhost(null);
+    room.setDropState(null, null);
+    const { kind, from } = d;
+    const target = targetSlot(kind, x, y);
+    const l = toLocal(x, y);
+    if (target != null && target !== from) {
+      const s = BodyLayout.get(target)!;
+      const old = room.moduleAt(target);
+      if (from != null) {
+        ModuleConfig.detach(from);
+        // 移動で別のモジュールに重ねたときは入れ替える
+        if (old != null) ModuleConfig.attach(old, from);
       }
-      if (hover === d.fromSlot) return;
-      ModuleConfig.replace(d.kind, hover);
-      if (d.fromSlot) ModuleConfig.detach(d.fromSlot);
-    },
-    [room, ghostVisible, hoverSlotAt],
-  );
-
-  const tray: ModuleDragTarget = {
-    beginDrag: (kind, fromSlot, w) => beginDragging(kind, fromSlot, w.x, w.y),
-    drag: (w) => updateDragging(w.x, w.y),
-    endDrag: (w) => endDragging(w.x, w.y),
+      ModuleConfig.replace(kind, target);
+      setHint(
+        old != null
+          ? `${BodyLayout.faceLabel(s.face)}の${s.label}を ${ModuleCatalog.name(old)} → ${ModuleCatalog.name(kind)} に切り替えました`
+          : `${BodyLayout.faceLabel(s.face)}の${s.label}に${ModuleCatalog.name(kind)}を取り付けました`,
+      );
+    } else if (from != null && (overTray(x, y) || (target == null && !room.isOverRobot(l.x, l.y)))) {
+      // トレイの上か、Aidy から離れた所で指を離したら取り外し
+      ModuleConfig.detach(from);
+      setHint(`${ModuleCatalog.name(kind)}を取り外しました`);
+    } else if (target == null && room.slotAtScreen(l.x, l.y, SnapDp, null) != null) {
+      setHint(`${ModuleCatalog.name(kind)}はそこには付けられません`, true);
+    } else setHint("");
   };
 
-  const ghostScale = ghostVisible.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] });
-  const ghostStyle = {
-    opacity: ghostVisible,
-    transform: [{ translateX: ghostX }, { translateY: ghostY }, { scale: ghostScale }],
+  // 3D モデル上のモジュールをつかんだとき (View3D から)
+  const fromModel: ModuleDragTarget = {
+    beginDrag: (kind, fromSlot, w) => beginDrag(kind, fromSlot, w.x, w.y),
+    drag: (w) => moveDrag(w.x, w.y),
+    endDrag: (w) => endDrag(w.x, w.y),
   };
+
+  // カメラ AR 中は、ページの横スワイプと AR の指の操作がぶつからないようにページ送りを止める
+  const arOn = ui.arMode && active;
+  useEffect(() => {
+    if (!arOn) return;
+    onPagerLock?.(true);
+    return () => onPagerLock?.(false);
+  }, [arOn, onPagerLock]);
 
   if (ui.arMode) {
-    return (
-      <View style={styles.stub}>
-        <Label text="AR カメラ (Phase 6/7 で実装)" size={14} color={Theme.Slate400} />
-      </View>
-    );
+    // ほかのページにいる間はカメラを止める
+    if (!active) return <View style={styles.stub} />;
+    return <ArCameraView onClose={() => ui.setArMode(false)} />;
   }
-
-  const fitting = room.selectedFace ? new Set(ModuleCatalog.forFace(room.selectedFace)) : null;
 
   return (
     <View style={styles.root}>
@@ -115,113 +148,45 @@ export function ARPage({ ui, active, onMarkerButton }: { ui: ARPageUi; active: b
         room={room}
         active={active}
         statusText={ui.editStateText}
-        hint="面をタップで選択 ・ モジュールをドラッグして付け替え"
+        hint="面をタップで選択 ・ ドラッグで回転 ・ ピンチでズーム"
         mascot={ui.editMascot}
         toast={ui.arToast}
-        tray={tray}
+        tray={fromModel}
         onViewOrigin={(x, y) => {
           viewOrigin.current = { x, y };
         }}
         bottomInset={TrayHeight + TrayMargin * 2}
       />
 
-      <View
-        ref={trayRef}
-        style={styles.trayBar}
-        onLayout={() => trayRef.current?.measureInWindow((_x, y) => (trayTop.current = y))}
-      >
-        <Label
-          text={room.selectedFace ? `${BodyLayout.faceLabel(room.selectedFace)}に付けられるモジュール` : "本体をタップして面を選んでね"}
-          size={11}
-          color={Theme.TextSub}
-          bold
-          style={styles.trayHint}
+      <View style={styles.trayWrap}>
+        <ModuleTray
+          room={room}
+          active={active}
+          hint={hint}
+          hintError={hintError}
+          removing={drag != null && drag.from != null}
+          handlers={{
+            beginDrag: (kind, x, y) => beginDrag(kind, null, x, y),
+            drag: moveDrag,
+            endDrag,
+          }}
+          onPagerLock={onPagerLock}
+          onTrayLayout={(r) => (trayRect.current = r)}
         />
-        <View style={styles.trayRow}>
-          {ModuleCatalog.All.map((kind) => (
-            <TrayChip
-              key={kind}
-              kind={kind}
-              enabled={fitting != null && fitting.has(kind)}
-              onBegin={beginDragging}
-              onUpdate={updateDragging}
-              onEnd={endDragging}
-            />
-          ))}
-        </View>
       </View>
 
-      {ghostKind && (
-        <Animated.View pointerEvents="none" style={[styles.ghost, ghostStyle]}>
-          <View style={[styles.ghostIcon, { backgroundColor: ModuleCatalog.tint(ghostKind) }]}>
-            <Icon icon={ModuleCatalog.icon(ghostKind)} size={20} color="#fff" />
-          </View>
-        </Animated.View>
-      )}
+      <View style={styles.cameraButton}>
+        <SmallButton text="カメラARで見る" bg={Theme.Primary} fg="#fff" onPress={() => ui.setArMode(true)} />
+      </View>
+
+      {drag && ghost && <ModuleDragGhost kind={drag.kind} x={ghost.x} y={ghost.y} />}
     </View>
-  );
-}
-
-function TrayChip({
-  kind,
-  enabled,
-  onBegin,
-  onUpdate,
-  onEnd,
-}: {
-  kind: ModuleKind;
-  enabled: boolean;
-  onBegin: (kind: ModuleKind, fromSlot: string | null, x: number, y: number) => void;
-  onUpdate: (x: number, y: number) => void;
-  onEnd: (x: number, y: number) => void;
-}) {
-  const pan = Gesture.Pan()
-    .runOnJS(true)
-    .enabled(enabled)
-    .onStart((e) => onBegin(kind, null, e.absoluteX, e.absoluteY))
-    .onUpdate((e) => onUpdate(e.absoluteX, e.absoluteY))
-    .onEnd((e) => onEnd(e.absoluteX, e.absoluteY));
-
-  return (
-    <GestureDetector gesture={pan}>
-      <View style={[styles.chip, { opacity: enabled ? 1 : 0.35 }]}>
-        <View style={[styles.chipIcon, { backgroundColor: ModuleCatalog.tint(kind) }]}>
-          <Icon icon={ModuleCatalog.icon(kind)} size={16} color="#fff" />
-        </View>
-        <Label text={ModuleCatalog.name(kind)} size={10} color={Theme.TextSub} bold />
-      </View>
-    </GestureDetector>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Theme.Device },
-  stub: { flex: 1, backgroundColor: Theme.Device, alignItems: "center", justifyContent: "center" },
-  trayBar: {
-    position: "absolute",
-    left: 12,
-    right: 12,
-    bottom: TrayMargin,
-    height: TrayHeight,
-    paddingHorizontal: 10,
-    paddingTop: 8,
-    ...boxStyle("rgba(255,255,255,0.94)", 18, 3, Theme.Border),
-  },
-  trayHint: { paddingHorizontal: 2, paddingBottom: 4 },
-  trayRow: { flex: 1, flexDirection: "row", justifyContent: "space-around", alignItems: "center" },
-  chip: { alignItems: "center", gap: 4, width: 48 },
-  chipIcon: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
-  ghost: { position: "absolute", left: 0, top: 0, width: GhostSize, height: GhostSize },
-  ghostIcon: {
-    width: GhostSize,
-    height: GhostSize,
-    borderRadius: GhostSize / 2,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 6,
-  },
+  stub: { flex: 1, backgroundColor: "#000" },
+  cameraButton: { position: "absolute", right: 12, top: 10 },
+  trayWrap: { position: "absolute", left: 16, right: 16, bottom: TrayMargin, height: TrayHeight },
 });

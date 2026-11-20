@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Animated, Easing, Pressable, ScrollView, StyleProp, Text, TextStyle, View, ViewStyle } from "react-native";
+import { Animated, Easing, Pressable, ScrollView, StyleProp, Text, TextInput, TextStyle, View, ViewStyle } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { Theme } from "./theme";
 import { Icon } from "./icons";
 import { IconId } from "./iconIds";
@@ -301,5 +302,118 @@ export function ScrollPage({ style, children }: { style?: StyleProp<ViewStyle>; 
     >
       {children}
     </ScrollView>
+  );
+}
+
+/** 入力欄 (Widgets.kt の Input)。 */
+export function Input({
+  value,
+  onChange,
+  placeholder,
+  multiline = false,
+  password = false,
+  maxLength,
+  style,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  multiline?: boolean;
+  password?: boolean;
+  maxLength?: number;
+  style?: StyleProp<TextStyle>;
+}) {
+  return (
+    <TextInput
+      value={value}
+      onChangeText={onChange}
+      placeholder={placeholder}
+      placeholderTextColor={Theme.Slate400}
+      multiline={multiline}
+      secureTextEntry={password}
+      maxLength={maxLength}
+      autoCapitalize="none"
+      autoCorrect={false}
+      style={[
+        {
+          borderWidth: 1,
+          borderColor: Theme.Border,
+          backgroundColor: Theme.Device,
+          borderRadius: 10,
+          paddingHorizontal: 12,
+          paddingVertical: 9,
+          fontSize: 13,
+          color: Theme.TextMain,
+        },
+        multiline && { minHeight: 72, textAlignVertical: "top" },
+        style,
+      ]}
+    />
+  );
+}
+
+/** 小さい角丸ボタン (Widgets.kt の SmallButton)。 */
+export function SmallButton({ text, bg, fg, onPress }: { text: string; bg: string; fg: string; onPress: () => void }) {
+  return (
+    <Pressed onPress={onPress} pressScale={0.95} style={[boxStyle(bg, 14), { paddingHorizontal: 14, paddingVertical: 7 }]}>
+      <Label text={text} size={12} color={fg} bold />
+    </Pressed>
+  );
+}
+
+/**
+ * 丸いつまみのスライダー (つまみ = 白い丸 + 青い縁、線は太めの角丸)。steps = 端と端の間の目盛りの数 (0 で連続)。
+ * onChange は動かしている間、onDone は指を離したとき。
+ */
+export function AidySlider({
+  value,
+  min,
+  max,
+  steps = 0,
+  onChange,
+  onDone,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  steps?: number;
+  onChange: (v: number) => void;
+  onDone?: (v: number) => void;
+}) {
+  const width = useRef(1);
+  const last = useRef(value);
+  const toValue = (x: number) => {
+    let f = Math.min(1, Math.max(0, x / width.current));
+    if (steps > 0) f = Math.round(f * (steps + 1)) / (steps + 1);
+    return min + (max - min) * f;
+  };
+  const pan = Gesture.Pan()
+    .runOnJS(true)
+    .minDistance(0)
+    .onBegin((e) => {
+      last.current = toValue(e.x);
+      onChange(last.current);
+    })
+    .onUpdate((e) => {
+      last.current = toValue(e.x);
+      onChange(last.current);
+    })
+    .onFinalize(() => onDone?.(last.current));
+  const f = Math.min(1, Math.max(0, (value - min) / (max - min || 1)));
+  return (
+    <GestureDetector gesture={pan}>
+      <View style={{ height: 36, justifyContent: "center" }} onLayout={(e) => (width.current = Math.max(1, e.nativeEvent.layout.width))}>
+        <View style={{ height: 8, borderRadius: 4, backgroundColor: Theme.Slate100, overflow: "hidden" }}>
+          <View style={{ width: `${f * 100}%`, height: 8, backgroundColor: Theme.Primary }} />
+        </View>
+        <View
+          pointerEvents="none"
+          style={[
+            boxStyle("#fff", 13, 3, Theme.Primary, 3),
+            { position: "absolute", width: 26, height: 26, left: `${f * 100}%`, marginLeft: -13 },
+          ]}
+        />
+      </View>
+    </GestureDetector>
   );
 }

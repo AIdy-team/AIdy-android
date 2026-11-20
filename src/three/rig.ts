@@ -5,6 +5,7 @@ import { MeshData } from "./meshData";
 import { lit, unlit, meshFrom, emptyGroup, colorOf } from "./gfx";
 import { loadModuleModel, loadBodyModel, peekModuleModel } from "./moduleAssets";
 import { BodyLayout, BodySlot, ModuleCatalog, ModuleConfig, ModuleKind } from "../data/modules";
+import { BodyColor, ColorPattern } from "../data/bodyColor";
 
 /** 本体・モジュールの材質の色 (0xAARRGGBB)。Rig.kt の AidyColors と同じ。 */
 export const AidyColors = {
@@ -66,6 +67,17 @@ export async function buildModuleShape(kind: ModuleKind, slot: BodySlot | null, 
       }
       break;
     }
+    case "Hat":
+    case "Tv": {
+      // シルクハット・ブラウン管テレビ: 平らな底を上面に置くだけ (動かない)
+      const hat = await loadModuleModel(kind);
+      if (hat) parts.push(new ShapePart(hat, -1, new Pose(V3.Zero, Q.Identity, new V3(mm, mm, mm)), "Satin"));
+      else {
+        const cyl = cached("hat", () => Meshes.cylinder(25, 25, 35, 24));
+        parts.push(new ShapePart(cyl, -1, new Pose(new V3(0, 17.5 * mm, 0), Q.Identity, new V3(mm, mm, mm)), "Satin"));
+      }
+      break;
+    }
     case "Ear": {
       const ear = await loadModuleModel(kind);
       if (ear) parts.push(new ShapePart(ear, -1, new Pose(V3.Zero, Q.Identity, new V3(mm, mm, mm)), "Satin"));
@@ -75,9 +87,9 @@ export async function buildModuleShape(kind: ModuleKind, slot: BodySlot | null, 
       }
       break;
     }
-    case "Tail":
-    case "Tail2": {
-      // 根元で左右に振る (wag)。差し込み部をスロットに入れ、+Z (背面なら上) へ反る
+    case "Tail45":
+    case "TailCurl": {
+      // 根元で左右に振る (wag)。台座をスロットに当て、+Z (背面なら上) へ反る
       pivots.push(new Pose());
       const tail = await loadModuleModel(kind);
       if (tail) {
@@ -118,9 +130,18 @@ class BodyVariants {
   withFace: THREE.Group | null = null;
   plain: THREE.Group | null = null;
   private ready: Promise<void>;
+  /** 外装 (色を変える部分) の材質。 */
+  private readonly shellMats: THREE.MeshStandardMaterial[] = [];
 
-  constructor(private parent: THREE.Group, private targetSize: number) {
+  constructor(private parent: THREE.Group, private targetSize: number, private color: number) {
     this.ready = this.build();
+  }
+
+  /** 外装の色を変える (0xffRRGGBB)。 */
+  setColor(argb: number): void {
+    this.color = argb;
+    const { color } = colorOf(argb);
+    for (const m of this.shellMats) m.color.copy(color);
   }
 
   get any(): boolean {
@@ -133,8 +154,8 @@ class BodyVariants {
 
   private async build(): Promise<void> {
     const [face, plain] = await Promise.all([loadBodyModel(true), loadBodyModel(false)]);
-    this.withFace = face ? buildBodyVariant(face, this.targetSize) : null;
-    this.plain = plain ? buildBodyVariant(plain, this.targetSize) : null;
+    this.withFace = face ? buildBodyVariant(face, this.targetSize, this.color, this.shellMats) : null;
+    this.plain = plain ? buildBodyVariant(plain, this.targetSize, this.color, this.shellMats) : null;
     if (this.withFace) this.parent.add(this.withFace);
     if (this.plain) this.parent.add(this.plain);
   }
@@ -148,13 +169,16 @@ class BodyVariants {
   }
 }
 
-function buildBodyVariant(data: MeshData, targetSize: number): THREE.Group {
+function buildBodyVariant(data: MeshData, targetSize: number, color: number, shellMats: THREE.MeshStandardMaterial[]): THREE.Group {
   const pivot = emptyGroup("BodyPivot");
   pivot.scale.setScalar(targetSize);
-  const materials = data.groups.map((g) =>
-    /EnamelWhite/i.test(g.material) ? lit(AidyColors.EnamelWhite, 0, 0.15) : lit(AidyColors.SteelSatin, 0.35, 0.4),
-  );
-  pivot.add(meshFrom(data, data.groups.length > 1 ? materials : materials[0] ?? lit(AidyColors.SteelSatin, 0.35, 0.4)));
+  const shell = () => {
+    const m = lit(color, 0.35, 0.4);
+    shellMats.push(m);
+    return m;
+  };
+  const materials = data.groups.map((g) => (/EnamelWhite/i.test(g.material) ? lit(AidyColors.EnamelWhite, 0, 0.15) : shell()));
+  pivot.add(meshFrom(data, data.groups.length > 1 ? materials : materials[0] ?? shell()));
   // 外装 (外形150mm・厚さ5mm) の内側の空洞を黒い箱で埋め、穴から中身が見えないようにする
   const box = meshFrom(cached("cube", () => Meshes.cube()), unlit(0xff000000), "InteriorOccluder");
   const s = 139.8 / 150;
@@ -168,6 +192,9 @@ interface Mount {
   root: THREE.Group;
   swing: THREE.Group[];
   swingBase: Pose[];
+  swingNow: Pose[];
+  /** 見た目の外形 (各部品の箱の角)。pivot = 振る部分の番号 (-1 は取り付け面)、v = その座標系での点。 */
+  hull: Array<{ pivot: number; v: V3 }>;
 }
 
 export interface SlotFrame {
@@ -184,9 +211,14 @@ export interface SlotFrame {
  */
 export class ModuleRig {
   private readonly k: number;
-  private readonly satin = lit(AidyColors.Satin, 0.55, 0.35);
   private readonly lens = unlit(AidyColors.Lens);
   readonly bodies: BodyVariants;
+  /** いま表示している色のパターン。 */
+  pattern: ColorPattern;
+  /** 取り付け口ごとのパーツの材質 (パーツを付け替えても使い回す)。 */
+  private readonly slotMats = new Map<string, THREE.MeshStandardMaterial>();
+  /** いまの色に従うとき: BodyColor が変わったら外装の色を変える。release で外す。 */
+  private readonly colorListener: ((p: ColorPattern) => void) | null;
 
   private readonly mounts = new Map<string, Mount>();
   private readonly frames = new Map<string, SlotFrame>();
@@ -204,10 +236,55 @@ export class ModuleRig {
     private editable: boolean,
     /** 決まった構成で組む (名刺マーカーの標準 Aidy)。null なら ModuleConfig (いまの着せ替え) に従う。 */
     private fixedSlots: Map<string, ModuleKind> | null = null,
+    /** 決まった色のパターン (着せ替えマーカー)。null なら BodyColor.pattern (いまの色) に従う。 */
+    fixedColor: ColorPattern | null = null,
   ) {
     this.k = size / 1.1;
-    this.bodies = new BodyVariants(body, size);
+    this.pattern = fixedColor ?? BodyColor.pattern;
+    this.bodies = new BodyVariants(body, size, this.pattern.body);
     this.buildFrames();
+    if (fixedColor == null) {
+      this.colorListener = (p) => this.applyPattern(p);
+      BodyColor.changed.push(this.colorListener);
+    } else this.colorListener = null;
+  }
+
+  private slotMat(id: string): THREE.MeshStandardMaterial {
+    let m = this.slotMats.get(id);
+    if (!m) {
+      m = lit(this.pattern.partColor(id), 0.55, 0.35);
+      this.slotMats.set(id, m);
+    }
+    return m;
+  }
+
+  /** 本体とパーツの色を変える (選んでいる途中の見た目にも使う)。 */
+  applyPattern(p: ColorPattern): void {
+    this.pattern = p;
+    this.bodies.setColor(p.body);
+    for (const [id, m] of this.slotMats) m.color.copy(colorOf(p.partColor(id)).color);
+  }
+
+  /** このリグを捨てるとき (色の通知を外す)。 */
+  release(): void {
+    if (!this.colorListener) return;
+    const i = BodyColor.changed.indexOf(this.colorListener);
+    if (i >= 0) BodyColor.changed.splice(i, 1);
+  }
+
+  /** 取り付け済みのパーツ (取り付け口 → 種類)。 */
+  get attached(): Map<string, ModuleKind> {
+    return new Map(Array.from(this.mounts.entries()).map(([id, m]) => [id, m.kind] as [string, ModuleKind]));
+  }
+
+  /**
+   * 取り付け済みモジュールの外形の点 (取り付け面ローカル)。付いていなければ空。
+   * 尻尾・手・足は今振っている角度で返す (画面でつかむ判定が動きについていくように)。
+   */
+  hullOf(slotId: string): V3[] {
+    const m = this.mounts.get(slotId);
+    if (!m) return [];
+    return m.hull.map(({ pivot, v }) => (pivot < 0 ? v : m.swingNow[pivot].point(v)));
   }
 
   get hasModel(): boolean {
@@ -320,6 +397,7 @@ export class ModuleRig {
       if (generation !== this.syncGeneration) return; // 読み込み中に構成が変わった
       const swing: THREE.Group[] = [];
       const swingBase: Pose[] = [];
+      const hull: Mount["hull"] = [];
       for (const p of shape.pivots) {
         const n = emptyGroup();
         applyPose(n, p);
@@ -329,12 +407,18 @@ export class ModuleRig {
       }
       for (const part of shape.parts) {
         const parent = part.pivot < 0 ? root : swing[part.pivot];
-        const mat = part.mat === "Lens" ? this.lens : this.satin;
+        const mat = part.mat === "Lens" ? this.lens : this.slotMat(id);
         const mesh = meshFrom(part.mesh, mat);
         applyPose(mesh, part.local);
         parent.add(mesh);
+        const lo = part.mesh.min;
+        const hi = part.mesh.max;
+        for (let c = 0; c < 8; c++) {
+          const v = new V3((c & 1) === 0 ? lo.x : hi.x, (c & 2) === 0 ? lo.y : hi.y, (c & 4) === 0 ? lo.z : hi.z);
+          hull.push({ pivot: part.pivot, v: part.local.point(v) });
+        }
       }
-      this.mounts.set(id, { kind, root, swing, swingBase });
+      this.mounts.set(id, { kind, root, swing, swingBase, swingNow: swingBase.slice(), hull });
     }
     this.faceOn = Array.from(want.values()).some((k) => k === "Face");
     this.bodies.setFace(this.faceOn);
@@ -344,7 +428,9 @@ export class ModuleRig {
 
   private setSwing(m: Mount, j: number, r: Q): void {
     const b = m.swingBase[j];
-    applyPose(m.swing[j], new Pose(b.p, b.r.multiply(r), b.s));
+    const now = new Pose(b.p, b.r.multiply(r), b.s);
+    m.swingNow[j] = now;
+    applyPose(m.swing[j], now);
   }
 
   swingLegs(amount: number, phase: number): void {
@@ -369,7 +455,7 @@ export class ModuleRig {
 
   wagTails(angle: number): void {
     for (const m of this.mounts.values())
-      if (ModuleCatalog.isTail(m.kind))
+      if (ModuleCatalog.isTail(m.kind) && m.kind !== "TailCurl") // 巻き尻尾は面に沿わせているので振らない
         for (let j = 0; j < m.swing.length; j++) this.setSwing(m, j, uRot(angle * (180 / Math.PI), V3.Forward));
   }
 }

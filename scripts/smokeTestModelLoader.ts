@@ -9,17 +9,26 @@ import type { MountAxis } from "../src/data/modules";
 
 const modelsDir = path.join(__dirname, "..", "src", "assets", "models");
 
+// modules.ts の ModuleCatalog.modelKey() / axis() と同じ対応 (ファイルはサブフォルダも探す)
 const modules: Array<{ name: string; key: string; axis: MountAxis }> = [
-  { name: "耳", key: "ear", axis: "ZUpFrontMinusY" },
-  { name: "尻尾", key: "tail", axis: "SlotTabPlusY" },
-  { name: "尻尾2", key: "tail2", axis: "SlotTabPlusY" },
+  { name: "耳", key: "mimi2", axis: "ZUpFrontMinusY" },
+  { name: "尻尾45", key: "尻尾_45", axis: "SlotTabPlusY" },
+  { name: "巻き尻尾", key: "尻尾_巻き2", axis: "FlatHangY" },
+  { name: "シルクハット", key: "シルクハット", axis: "ZUpFrontMinusY" },
+  { name: "ブラウン管テレビ", key: "ブラウン管テレビ", axis: "ZUpFrontMinusYCentered" },
   { name: "足", key: "legs", axis: "TopPadZUp" },
   { name: "手", key: "hand", axis: "MagnetPlusX" },
   { name: "ライト手", key: "hand_light", axis: "MagnetPlusX" },
 ];
 
+function listFiles(dir: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? listFiles(path.join(dir, e.name)).map((f) => path.join(e.name, f)) : [e.name],
+  );
+}
+
 for (const m of modules) {
-  const files = fs.readdirSync(modelsDir).filter((f) => f.startsWith(`${m.key}.`));
+  const files = listFiles(modelsDir).filter((f) => path.basename(f).startsWith(`${m.key}.`));
   if (files.length === 0) {
     console.log(`${m.name}: ファイルが見つかりません (${m.key})`);
     continue;

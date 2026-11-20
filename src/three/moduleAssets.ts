@@ -3,7 +3,7 @@ import { File } from "expo-file-system";
 import { ModuleKind, ModuleCatalog, MountAxis } from "../data/modules";
 import { MeshData } from "./meshData";
 import { parseModule, parseBodyModel } from "./modelLoader";
-import { moduleModels, moduleModelFormats, bodyObj, bodyFaceObj } from "../assets/generated/manifest";
+import { moduleModels, moduleModelFormats, bodyObj, bodyFaceObj, roomModels, roomColors } from "../assets/generated/manifest";
 
 async function readAssetBytes(moduleId: number): Promise<Uint8Array> {
   const asset = Asset.fromModule(moduleId);
@@ -68,4 +68,30 @@ export function loadBodyModel(face: boolean): Promise<MeshData | null> {
     return null;
   });
   return bodyCache;
+}
+
+/** ホームの部屋の家具 (room/name.obj、ファイルの座標のまま) と材質の色 (name.mtl の Kd)。 */
+export interface RoomModel {
+  mesh: MeshData;
+  colors: Record<string, number>;
+}
+
+const roomCache = new Map<string, Promise<RoomModel | null>>();
+
+export function loadRoomModel(name: string): Promise<RoomModel | null> {
+  let p = roomCache.get(name);
+  if (p) return p;
+  p = (async () => {
+    const id = roomModels[name];
+    if (id == null) return null;
+    try {
+      const mesh = parseBodyModel(await readAssetBytes(id), false);
+      return mesh ? { mesh, colors: roomColors[name] ?? {} } : null;
+    } catch (e) {
+      console.warn(`[AIDY] 家具の読込に失敗 ${name}:`, e);
+      return null;
+    }
+  })();
+  roomCache.set(name, p);
+  return p;
 }

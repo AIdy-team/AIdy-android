@@ -3,6 +3,7 @@ import * as MediaLibrary from "expo-media-library";
 import { Prefs } from "./prefs";
 import { ModuleConfig, ModuleConfigDefault, ModuleKind, formatModuleMap, parseModuleString } from "./modules";
 import { Dict4x4_50 } from "../ar/arucoDict";
+import { BodyColor, ColorPattern } from "./bodyColor";
 
 /**
  * AR に使う ArUco マーカー (DICT_4X4_50)。ID0 = いまの着せ替え、ID1 = 名刺 (標準構成)、
@@ -38,6 +39,13 @@ export const AidyMarkers = {
     return `着せ替えAidy #${id}`;
   },
 
+  /** そのマーカーで出す色のパターン。いまの着せ替えマーカーはいまの色、名刺は標準のグレー。 */
+  color(id: number): ColorPattern {
+    if (id === this.MyId) return BodyColor.pattern;
+    if (id === this.CardId) return ColorPattern.Default;
+    return MarkerStore.color(id) ?? ColorPattern.Default;
+  },
+
   /** そのマーカーで出す構成。null = いまの着せ替え (ModuleConfig)。 */
   config(id: number): Map<string, ModuleKind> | null {
     if (id === this.MyId) return null;
@@ -56,12 +64,17 @@ function mapsEqual(a: Map<string, ModuleKind>, b: Map<string, ModuleKind>): bool
  * アプリで作った着せ替えマーカー (ID → そのときのモジュール構成)。端末に保存される。
  * マーカーと構成の対応はこの端末にしかないので、ほかの端末でかざしても出ない。
  */
+interface MarkerEntry {
+  slots: Map<string, ModuleKind>;
+  color: ColorPattern | null;
+}
+
 class MarkerStoreImpl {
   private static readonly PrefKey = "aidy.markers.v1";
   private static readonly FirstId = 2;
-  private saved: Map<number, Map<string, ModuleKind>> | null = null;
+  private saved: Map<number, MarkerEntry> | null = null;
 
-  /** 作った・消したとき。 */
+  /** 作った・消した・色を変えたとき。 */
   readonly changed: Array<() => void> = [];
 
   get ids(): number[] {
@@ -69,38 +82,56 @@ class MarkerStoreImpl {
   }
 
   get(id: number): Map<string, ModuleKind> | null {
-    return this.load().get(id) ?? null;
+    return this.load().get(id)?.slots ?? null;
   }
 
-  /** 同じ構成のマーカーがあればその ID。 */
-  find(slots: Map<string, ModuleKind>): number | null {
-    for (const [id, v] of this.load()) if (mapsEqual(v, slots)) return id;
+  /** そのマーカーの色のパターン (作ったときの色)。古いマーカーなど色がなければ null。 */
+  color(id: number): ColorPattern | null {
+    return this.load().get(id)?.color ?? null;
+  }
+
+  /** 同じ構成・同じ色のマーカーがあればその ID。 */
+  find(slots: Map<string, ModuleKind>, color: ColorPattern): number | null {
+    for (const [id, e] of this.load()) if (mapsEqual(e.slots, slots) && (e.color ?? ColorPattern.Default).equals(color)) return id;
     return null;
   }
 
-  /** いまの構成を空いている ID に保存する。空きがなければ null。 */
-  create(slots: Map<string, ModuleKind>): number | null {
+  /** 構成と色を空いている ID に保存する。空きがなければ null。 */
+  create(slots: Map<string, ModuleKind>, color: ColorPattern): number | null {
     const map = this.load();
     for (let id = MarkerStoreImpl.FirstId; id < Dict4x4_50.length; id++) {
       if (map.has(id)) continue;
-      map.set(id, new Map(slots));
+      map.set(id, { slots: new Map(slots), color });
       this.save();
-      for (const l of this.changed.slice()) l();
+      this.fire();
       return id;
     }
     return null;
   }
 
+  /** 作ったマーカーの色を変える。 */
+  setColor(id: number, color: ColorPattern): void {
+    const e = this.load().get(id);
+    if (!e || (e.color != null && e.color.equals(color))) return;
+    e.color = color;
+    this.save();
+    this.fire();
+  }
+
   delete(id: number): void {
     if (!this.load().delete(id)) return;
     this.save();
+    this.fire();
+  }
+
+  private fire(): void {
     for (const l of this.changed.slice()) l();
   }
 
-  // 形式: "2=top_1:Ear,back_1:Tail;3=..." (Unity 版と同じ)
-  private load(): Map<number, Map<string, ModuleKind>> {
+  // 形式: "2=top_1:Ear,back_1:Tail45|#A0A0A0,*#2F4A8A,top_1#FFFFFF;3=..." (Unity 版の形式 + "|色のパターン")
+  private load(): Map<number, MarkerEntry> {
     if (this.saved) return this.saved;
-    const map = new Map<number, Map<string, ModuleKind>>();
+    const map = new Map<number, MarkerEntry>();
     this.saved = map;
     for (const entry of Prefs.getString(MarkerStoreImpl.PrefKey, "").split(";")) {
       if (entry.length === 0) continue;
@@ -108,14 +139,15 @@ class MarkerStoreImpl {
       if (eq < 0) continue;
       const id = parseInt(entry.slice(0, eq), 10);
       if (Number.isNaN(id)) continue;
-      map.set(id, parseModuleString(entry.slice(eq + 1)));
+      const body = entry.slice(eq + 1).split("|");
+      map.set(id, { slots: parseModuleString(body[0]), color: body.length > 1 ? ColorPattern.parse(body[1]) : null });
     }
     return map;
   }
 
   private save(): void {
     const parts: string[] = [];
-    for (const [id, v] of this.load()) parts.push(`${id}=${formatModuleMap(v)}`);
+    for (const [id, e] of this.load()) parts.push(`${id}=${formatModuleMap(e.slots)}` + (e.color ? "|" + e.color.format() : ""));
     Prefs.putString(MarkerStoreImpl.PrefKey, parts.join(";"));
   }
 }

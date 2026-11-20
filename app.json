@@ -11,10 +11,14 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.aidy.petrobot.rn",
       "infoPlist": {
-        "NSCameraUsageDescription": "AR表示でカメラ映像の上にAidyを配置するために使います。",
+        "NSCameraUsageDescription": "AR表示でカメラ映像の上にAidyを配置するためと、Aidy本体のQRコードを読み取るために使います。",
         "NSMotionUsageDescription": "ARでカメラの傾きを使って机や床の位置を推定するために使います。",
         "NSPhotoLibraryAddUsageDescription": "作成したマーカー画像を写真に保存するために使います。",
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSLocalNetworkUsageDescription": "同じWi-FiにいるAidy本体と通信して、日記・予定・辞書・音量を同期するために使います。",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
       }
     },
     "android": {
@@ -46,7 +50,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "AR表示でカメラ映像の上にAidyを配置するために使います。"
+          "cameraPermission": "AR表示でカメラ映像の上にAidyを配置するためと、Aidy本体のQRコードを読み取るために使います。"
         }
       ],
       [
@@ -62,15 +66,48 @@
           "savePhotosPermission": "作成したマーカー画像を写真に保存するために使います。"
         }
       ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "日記カレンダーにiPhoneの予定を表示し、アプリで入れた予定をiPhoneのカレンダーに追加するために使います。"
+        }
+      ],
       "expo-asset",
       [
         "expo-build-properties",
         {
           "android": {
-            "buildArchs": ["x86_64"]
+            "buildArchs": [
+              "x86_64"
+            ],
+            "usesCleartextTraffic": true
           }
         }
-      ]
+      ],
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "neverForLocation": true,
+          "bluetoothAlwaysPermission": "近くにあるAidy本体とBluetoothでつながり、日記・予定・辞書・音量を同期するために使います。"
+        }
+      ],
+      [
+        "@reactvision/react-viro",
+        {
+          "android": {
+            "xRMode": "AR"
+          },
+          "ios": {
+            "cameraUsagePermission": "AR表示でカメラ映像の上にAidyを配置するためと、Aidy本体のQRコードを読み取るために使います。",
+            "microphoneUsagePermission": "AR画面を録画するときに音声を録るために使います。",
+            "photosPermission": "作成したマーカー画像を写真に保存するために使います。",
+            "savephotosPermission": "作成したマーカー画像を写真に保存するために使います。"
+          },
+          "telemetry": false
+        }
+      ],
+      "expo-status-bar"
     ],
     "extra": {
       "eas": {

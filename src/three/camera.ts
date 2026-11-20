@@ -47,11 +47,12 @@ export class AidyCamera {
     this.three.aspect = this.aspect;
     this.three.near = this.nearPlane;
     this.three.far = this.farPlane;
+    // Filament の setShift(0, shiftY) と同じく、写る範囲を NDC で shiftY だけずらして中身を上へ動かす (ray / worldToScreen と同じ向き)。
+    // 射影行列を直接書き換えると、R3F がサイズ変更のたびに updateProjectionMatrix() を呼んで消えてしまう (しかも符号が逆だった) ので、
+    // three.js の view offset で表す (updateProjectionMatrix のたびに反映される)。
+    if (this._shiftY !== 0) this.three.setViewOffset(this.width, this.height, 0, (this._shiftY * this.height) / 2, this.width, this.height);
+    else this.three.clearViewOffset();
     this.three.updateProjectionMatrix();
-    if (this._shiftY !== 0) {
-      // Unity/Filament の setShift(0, shiftY) と同じく、射影行列の [row1, col2] (= elements[9]、列優先配列) に加える
-      this.three.projectionMatrix.elements[9] += this._shiftY;
-    }
   }
 
   lookAt(eye: V3, target: V3): void {

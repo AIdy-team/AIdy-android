@@ -5,20 +5,10 @@ import { Icon } from "../components/icons";
 import { Label, AidySwitch } from "../components/widgets";
 import { View3D } from "../components/View3D";
 import { HomeUi } from "../app/appState";
-import { ModuleConfig, ModuleKind } from "../data/modules";
-
-function moduleSummaryText(slots: Map<string, ModuleKind>): string {
-  const counts = new Map<ModuleKind, number>();
-  for (const k of slots.values()) counts.set(k, (counts.get(k) ?? 0) + 1);
-  const parts: string[] = [];
-  for (const k of ["Ear", "Tail", "Tail2", "Legs", "Face", "Hand", "HandLight"] as ModuleKind[]) {
-    const n = counts.get(k);
-    if (n == null) continue;
-    const name = { Ear: "耳", Tail: "尻尾", Tail2: "尻尾2", Legs: "足", Face: "顔", Hand: "手", HandLight: "ライト手" }[k];
-    parts.push(n > 1 ? `${name}×${n}` : name);
-  }
-  return parts.length > 0 ? parts.join("・") : "なし (本体だけ)";
-}
+import { ModuleConfig } from "../data/modules";
+import { BodyColor } from "../data/bodyColor";
+import { ColorPatternDialog, PatternDot } from "../components/colorPicker";
+import { Pressed, boxStyle } from "../components/widgets";
 
 const SummaryHeight = 58;
 const SummaryMargin = 12;
@@ -37,7 +27,9 @@ export function HomePage({ ui, active, onEdit }: { ui: HomeUi; active: boolean; 
     };
   }, []);
   void moduleVersion;
-  const summary = moduleSummaryText(ModuleConfig.current);
+  const summary = ModuleConfig.summary(ModuleConfig.current);
+  const [showColor, setShowColor] = useState(false);
+  const [, setColorVersion] = useState(0);
 
   return (
     <View style={styles.root}>
@@ -50,6 +42,37 @@ export function HomePage({ ui, active, onEdit }: { ui: HomeUi; active: boolean; 
         toast={ui.toast}
         toastTop={52}
         bottomInset={SummaryHeight + SummaryMargin * 2}
+      />
+
+      {/* 右上: 本体の色を変える */}
+      <View style={{ position: "absolute", top: 12, right: 12 }}>
+        <Pressed
+          onPress={() => setShowColor(true)}
+          pressScale={0.95}
+          style={[boxStyle("rgba(255,255,255,0.94)", 17, 4, Theme.Border), { height: 34, flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 6, paddingRight: 12 }]}
+        >
+          <PatternDot pattern={BodyColor.pattern} size={24} />
+          <Label text="色" size={12} color={Theme.TextMain} bold />
+        </Pressed>
+      </View>
+
+      <ColorPatternDialog
+        visible={showColor}
+        title="Aidyの色"
+        initial={BodyColor.pattern}
+        attached={ui.room.rig.attached}
+        onPreview={(p) => ui.room.rig.applyPattern(p)}
+        onConfirm={(p) => {
+          BodyColor.pattern = p;
+          ui.room.rig.applyPattern(p);
+          setShowColor(false);
+          setColorVersion((v) => v + 1);
+          ui.toast.show("Happy", "新しい色になったよ！", 2.2);
+        }}
+        onDismiss={() => {
+          ui.room.rig.applyPattern(BodyColor.pattern); // 選んでいた色を戻す
+          setShowColor(false);
+        }}
       />
 
       <View style={styles.summaryBar}>

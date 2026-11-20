@@ -5,22 +5,45 @@ import { Prefs } from "./prefs";
 import { bodyLayoutJson } from "../assets/generated/manifest";
 
 /** 本体に取り付けるモジュールの種類。Kotlin版 Modules.kt の ModuleKind と同じ。 */
-export type ModuleKind = "Ear" | "Tail" | "Tail2" | "Legs" | "Face" | "Hand" | "HandLight";
+export type ModuleKind = "Ear" | "Tail45" | "TailCurl" | "Hat" | "Tv" | "Legs" | "Face" | "Hand" | "HandLight";
 
-/** モデルファイルの向き。取り付け面ローカル (+Y=外向き, +Z=正面) へどう変換するか。MountAxis と同じ。 */
-export type MountAxis = "ZUpFrontMinusY" | "OutwardMinusY" | "MagnetPlusX" | "SlotTabPlusY" | "TopPadZUp";
+/**
+ * モデルファイルの向き。取り付け面ローカル (+Y=外向き, +Z=正面) へどう変換するか。MountAxis と同じ。
+ * - ZUpFrontMinusY: Z 上・-Y 正面・原点 (x,y) が取り付け位置 (mimi2.stl・シルクハット.stl)
+ * - ZUpFrontMinusYCentered: Z 上・-Y 正面。底面の XY の中心を取り付け位置にする (ブラウン管テレビ.stl)
+ * - OutwardMinusY: -Y 方向へ突き出す。+Y 側の端を取り付け面に置く
+ * - MagnetPlusX: +X 側のマグネット用くぼみを本体に当てる (手_短い*.3mf)
+ * - SlotTabPlusY: -Y 側の台座の底面を取り付け面に置き、+Z 側へ反らせる (尻尾_45.stl)
+ * - EndPlusX: +X 端の面を取り付け面に置く
+ * - FlatHangY: L 字を面に平らに沿わせて長い棒を下へ垂らす (尻尾_巻き2.stl)
+ * - TopPadZUp: 上面の平らな面を本体の底面に当てる (足v1.3mf)
+ */
+export type MountAxis =
+  | "ZUpFrontMinusY"
+  | "ZUpFrontMinusYCentered"
+  | "OutwardMinusY"
+  | "MagnetPlusX"
+  | "SlotTabPlusY"
+  | "EndPlusX"
+  | "FlatHangY"
+  | "TopPadZUp";
 
 type ModuleEvent = (slotId: string, removed: ModuleKind | null, added: ModuleKind | null) => void;
 
+/** 昔の保存データの種類名 → いまの種類 (Tail → 尻尾45、Tail2 → 巻き尻尾)。 */
+const LegacyKinds: Record<string, ModuleKind> = { Tail: "Tail45", Tail2: "TailCurl" };
+
 /** モジュールの名前・アイコン・色・モデルファイル・取り付けられる面。 */
 export const ModuleCatalog = {
-  All: ["Ear", "Tail", "Tail2", "Legs", "Face", "Hand", "HandLight"] as ModuleKind[],
+  All: ["Ear", "Tail45", "TailCurl", "Hat", "Tv", "Legs", "Face", "Hand", "HandLight"] as ModuleKind[],
 
   name(k: ModuleKind): string {
     switch (k) {
       case "Ear": return "耳";
-      case "Tail": return "尻尾";
-      case "Tail2": return "尻尾2";
+      case "Tail45": return "尻尾45";
+      case "TailCurl": return "巻き尻尾";
+      case "Hat": return "シルクハット";
+      case "Tv": return "ブラウン管テレビ";
       case "Legs": return "足";
       case "Hand": return "手";
       case "HandLight": return "ライト手";
@@ -31,8 +54,10 @@ export const ModuleCatalog = {
   icon(k: ModuleKind): IconId {
     switch (k) {
       case "Ear": return "Ear";
-      case "Tail":
-      case "Tail2": return "Tail";
+      case "Tail45":
+      case "TailCurl": return "Tail";
+      case "Hat": return "Hat";
+      case "Tv": return "Video";
       case "Legs": return "Leg";
       case "Hand": return "Hand";
       case "HandLight": return "Flashlight";
@@ -43,8 +68,10 @@ export const ModuleCatalog = {
   tint(k: ModuleKind): string {
     switch (k) {
       case "Ear": return Theme.hex(0xf97316);
-      case "Tail": return Theme.hex(0x8b5cf6);
-      case "Tail2": return Theme.hex(0x6366f1);
+      case "Tail45": return Theme.hex(0xa855f7);
+      case "TailCurl": return Theme.hex(0x0ea5e9);
+      case "Hat": return Theme.hex(0x334155);
+      case "Tv": return Theme.hex(0x78716c);
       case "Legs": return Theme.hex(0x10b981);
       case "Hand": return Theme.hex(0xec4899);
       case "HandLight": return Theme.hex(0xeab308);
@@ -57,8 +84,10 @@ export const ModuleCatalog = {
     switch (k) {
       case "Face": return s.isMonitor;
       case "Ear": return !s.isMonitor && (s.face === "top" || s.face === "left" || s.face === "right");
-      case "Tail":
-      case "Tail2": return !s.isMonitor && (s.face === "back" || s.face === "top");
+      case "Tail45":
+      case "TailCurl": return !s.isMonitor && (s.face === "back" || s.face === "top");
+      case "Hat": return s.id === "top_2"; // つばが 80mm あるので上面の真ん中だけ
+      case "Tv": return s.id === "top_2"; // 82x68mm あるので上面の真ん中だけ
       case "Legs": return !s.isMonitor && s.face === "bottom";
       case "Hand":
       case "HandLight": return !s.isMonitor && (s.face === "left" || s.face === "right");
@@ -66,15 +95,17 @@ export const ModuleCatalog = {
   },
 
   isTail(k: ModuleKind): boolean {
-    return k === "Tail" || k === "Tail2";
+    return k === "Tail45" || k === "TailCurl";
   },
 
-  /** モデルファイル (assets/models/ 以下、manifestのキー)。顔はモデルを持たない (本体v2_顔ありに切り替え)。 */
+  /** モデルファイル (assets/models/ 以下のファイル名、manifestのキー)。顔はモデルを持たない (本体v2_顔ありに切り替え)。 */
   modelKey(k: ModuleKind): string | null {
     switch (k) {
-      case "Ear": return "ear";
-      case "Tail": return "tail";
-      case "Tail2": return "tail2";
+      case "Ear": return "mimi2";
+      case "Tail45": return "尻尾_45";
+      case "TailCurl": return "尻尾_巻き2";
+      case "Hat": return "シルクハット";
+      case "Tv": return "ブラウン管テレビ";
       case "Hand": return "hand";
       case "HandLight": return "hand_light";
       case "Legs": return "legs";
@@ -84,12 +115,20 @@ export const ModuleCatalog = {
 
   axis(k: ModuleKind): MountAxis {
     switch (k) {
-      case "Ear": return "ZUpFrontMinusY";
-      case "Tail":
-      case "Tail2": return "SlotTabPlusY";
+      case "Ear":
+      case "Hat": return "ZUpFrontMinusY";
+      case "Tail45": return "SlotTabPlusY";
+      case "TailCurl": return "FlatHangY";
+      case "Tv": return "ZUpFrontMinusYCentered";
       case "Legs": return "TopPadZUp";
       default: return "MagnetPlusX";
     }
+  },
+
+  /** 保存データの種類名を読む (昔の名前も読む)。読めなければ null。 */
+  parseKind(name: string): ModuleKind | null {
+    if ((ModuleCatalog.All as string[]).includes(name)) return name as ModuleKind;
+    return LegacyKinds[name] ?? null;
   },
 
   /** その面に付けられるモジュール。 */
@@ -325,8 +364,8 @@ export function parseModuleString(text: string): Map<string, ModuleKind> {
   for (const pair of text.split(",")) {
     const kv = pair.split(":");
     if (kv.length !== 2) continue;
-    const k = kv[1] as ModuleKind;
-    if (!ModuleCatalog.All.includes(k)) continue;
+    const k = ModuleCatalog.parseKind(kv[1]);
+    if (k == null) continue;
     if (BodyLayout.get(kv[0])) map.set(kv[0], k);
   }
   return map;
@@ -336,7 +375,7 @@ export function parseModuleString(text: string): Map<string, ModuleKind> {
 export const ModuleConfigDefault: ReadonlyMap<string, ModuleKind> = new Map<string, ModuleKind>([
   ["top_1", "Ear"],
   ["top_3", "Ear"],
-  ["back_1", "Tail"],
+  ["back_1", "Tail45"],
   ["bottom_1", "Legs"],
   ["bottom_3", "Legs"],
   ["monitor", "Face"],

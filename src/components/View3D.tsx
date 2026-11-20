@@ -124,8 +124,13 @@ export function View3D({
           room.draggingModel = true;
           dragMode.current = "rotate";
           // 面を選んでいるとき、取り付け済みモジュールをつかんだらモジュールのドラッグ (移動/取り外し) にする
+          // 判定は押し始めた位置で行う (パンが始まるのは少し動かしてから)。
+          // 面をタップで選んでから、その面のモジュールだけつかめる。モジュールの見た目全体 (+余白) で判定する
           if (tray && room.editable && room.selectedFace != null) {
-            const slot = room.slotAtScreen(e.x, e.y, SlotPickDp, (s) => room.moduleAt(s.id) != null);
+            const px = e.x - e.translationX;
+            const py = e.y - e.translationY;
+            const slot =
+              room.moduleAtScreen(px, py, 18, true) ?? room.slotAtScreen(px, py, SlotPickDp, (s) => room.moduleAt(s.id) != null);
             if (slot != null) {
               const kind = room.moduleAt(slot);
               if (kind != null) {

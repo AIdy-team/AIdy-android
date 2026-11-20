@@ -201,17 +201,27 @@ function build(src0: V3[], axis: MountAxis): MeshData | null {
     }
   }
   let pocket: [number, number] = [0, 0];
-  if (axis === "MagnetPlusX") pocket = findPocket(src, lo, hi);
-  else if (axis === "TopPadZUp") pocket = topPad(src, hi.z);
+  switch (axis) {
+    case "MagnetPlusX": pocket = findPocket(src, lo, hi); break;
+    case "TopPadZUp": pocket = topPad(src, hi.z); break;
+    case "SlotTabPlusY": pocket = faceCenter(src, 1, lo.y); break;
+    case "EndPlusX": pocket = faceCenter(src, 0, hi.x); break;
+    // 腕の中心 (X は -X 端から棒の太さの半分、Z は全体の中央)。棒の太さ = X の端 (Z 最小側) の Z 方向の幅
+    case "FlatHangY": pocket = [lo.x + barWidth(src, lo, hi) * 0.5, (lo.z + hi.z) * 0.5]; break;
+  }
 
   const count = src.length - (src.length % 3);
   const pos: V3[] = new Array(count);
   for (let i = 0; i < count; i++) {
     const p = src[i];
     let u: V3;
+    // Unity 版と同じ取り付け面ローカル (Unity 座標) にしてから X 反転
     switch (axis) {
       case "ZUpFrontMinusY":
         u = new V3(-p.x, p.z - lo.z, -p.y);
+        break;
+      case "ZUpFrontMinusYCentered":
+        u = new V3(-(p.x - (lo.x + hi.x) * 0.5), p.z - lo.z, -(p.y - (lo.y + hi.y) * 0.5));
         break;
       case "OutwardMinusY": {
         const cx = (lo.x + hi.x) * 0.5;
@@ -220,7 +230,14 @@ function build(src0: V3[], axis: MountAxis): MeshData | null {
         break;
       }
       case "SlotTabPlusY":
-        u = new V3(-p.x, p.y - lo.y, p.z);
+        u = new V3(-(p.x - pocket[0]), p.y - lo.y, p.z - pocket[1]);
+        break;
+      case "EndPlusX":
+        u = new V3(-(p.y - pocket[0]), hi.x - p.x, p.z - pocket[1]);
+        break;
+      // 下で X 反転するので、反転後が (Z → +X, Y → 外向き, -X → 上) になるようにする
+      case "FlatHangY":
+        u = new V3(-(p.z - pocket[1]), p.y - lo.y, -(p.x - pocket[0]));
         break;
       case "TopPadZUp":
         u = new V3(p.x - pocket[0], hi.z - p.z, -(p.y - pocket[1]));
@@ -316,6 +333,30 @@ function topPad(src: V3[], top: number): [number, number] {
   return [(x0 + x1) * 0.5, (y0 + y1) * 0.5];
 }
 
+/** L 字の長い棒の太さ: +X 端 (棒の先) にある頂点の Z の幅。 */
+function barWidth(src: V3[], lo: V3, hi: V3): number {
+  let zMin = Infinity;
+  let zMax = -Infinity;
+  const edge = hi.x - (hi.x - lo.x) * 0.05;
+  for (const p of src) {
+    if (p.x < edge) continue;
+    zMin = Math.min(zMin, p.z);
+    zMax = Math.max(zMax, p.z);
+  }
+  return zMax > zMin ? zMax - zMin : (hi.z - lo.z) * 0.5;
+}
+
+/** axis (0=X, 1=Y) の座標が plane の面の中心。残りの 2 軸を (小さい軸, 大きい軸) の順で返す。 */
+function faceCenter(src: V3[], axis: 0 | 1, plane: number): [number, number] {
+  let a0 = Infinity, b0 = Infinity, a1 = -Infinity, b1 = -Infinity;
+  for (const p of src) {
+    if (Math.abs((axis === 0 ? p.x : p.y) - plane) > 0.3) continue;
+    const a = axis === 0 ? p.y : p.x;
+    a0 = Math.min(a0, a); b0 = Math.min(b0, p.z); a1 = Math.max(a1, a); b1 = Math.max(b1, p.z);
+  }
+  return a0 <= a1 ? [(a0 + a1) * 0.5, (b0 + b1) * 0.5] : [0, 0];
+}
+
 /** +X 面のくぼみ (面から 3〜6mm 奥の底面) の中心 (y, z)。見つからなければ全体の中心。 */
 function findPocket(src: V3[], lo: V3, hi: V3): [number, number] {
   let y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
@@ -342,7 +383,7 @@ export function parseModule(bytes: Uint8Array, format: ModelFormat, axis: MountA
  * 「中心を原点へ → 最大辺が 1 になるよう一括スケール → X 軸 -90° 回転 (前面を +Z へ)」した形で返す。
  * OBJ の座標 (右手系) をそのまま使う。
  */
-export function parseBodyModel(b: Uint8Array): MeshData | null {
+export function parseBodyModel(b: Uint8Array, normalize = true): MeshData | null {
   const verts: V3[] = [];
   const vns: V3[] = [];
   const groups = new Map<string, { ps: V3[]; ns: (V3 | null)[] }>();
@@ -405,12 +446,13 @@ export function parseBodyModel(b: Uint8Array): MeshData | null {
     lo = V3.min(lo, v);
     hi = V3.max(hi, v);
   }
-  const center = lo.add(hi).scale(0.5);
+  // normalize = 中心へ寄せて最大辺 1・X -90° 回転 (本体用)。false ならファイルの座標のまま (部屋の家具)。
+  const center = normalize ? lo.add(hi).scale(0.5) : V3.Zero;
   const size = hi.sub(lo);
-  let maxDim = Math.max(size.x, Math.max(size.y, size.z));
+  let maxDim = normalize ? Math.max(size.x, Math.max(size.y, size.z)) : 1;
   if (maxDim <= 0) maxDim = 1;
   // rot = -90° まわり X 軸 (Q.euler(-PI/2, 0, 0) と同値、直接計算して誤差を避ける)
-  const rot = (v: V3): V3 => new V3(v.x, v.z, -v.y);
+  const rot = normalize ? (v: V3): V3 => new V3(v.x, v.z, -v.y) : (v: V3): V3 => v;
 
   let total = 0;
   for (const g of groups.values()) total += g.ps.length;

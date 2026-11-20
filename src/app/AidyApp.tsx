@@ -68,13 +68,18 @@ export function AidyApp({ app }: { app: AppState }) {
             <DiaryPage active={current === PageDiary} />
           </View>
           <View key="remote" style={styles.page}>
-            <RemotePage />
+            <RemotePage visible={current === PageRemote} />
           </View>
           <View key="ar" style={styles.page}>
-            <ARPage ui={app.ar} active={current === PageAR} onMarkerButton={() => app.markerSheet.open()} />
+            <ARPage
+              ui={app.ar}
+              active={current === PageAR}
+              onMarkerButton={() => app.markerSheet.open()}
+              onPagerLock={(locked) => pagerRef.current?.setScrollEnabled(!locked)}
+            />
           </View>
           <View key="settings" style={styles.page}>
-            <SettingsPage onOpenDiary={() => goTo(PageDiary)} />
+            <SettingsPage active={current === PageSettings} onOpenDiary={() => goTo(PageDiary)} />
           </View>
         </PagerView>
         {current !== PageDiary && current !== PageHome && current !== PageAR && (

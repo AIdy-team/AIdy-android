@@ -40,5 +40,7 @@ yarn-error.*
 /ios
 /android
 
-# Unity 側から自動コピーされるモデル・画像 (scripts/syncAssets.js)
-/src/assets/
+
+# 本体の仕様書・サンプル (リポジトリには入れない)
+ble_bridge_sample.py
+*Bluetooth*仕様*.txt

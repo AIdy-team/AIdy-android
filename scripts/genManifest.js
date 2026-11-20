@@ -11,6 +11,8 @@ const path = require("path");
 
 const root = path.resolve(__dirname, "..");
 const modelsDir = path.join(root, "src", "assets", "models");
+// ホームの部屋の家具 (Kenney Furniture Kit, CC0)。name.obj + name.mtl の組。mtl の色 (Kd) はここで読んで manifest に埋め込む。
+const roomDir = path.join(root, "src", "assets", "room");
 const generatedDir = path.join(root, "src", "assets", "generated");
 
 // 同じ名前で拡張子違いが複数あるときに優先する順番。
@@ -66,11 +68,38 @@ function main() {
     moduleModels[name] = candidates.find((c) => c.ext === ext);
   }
 
-  writeManifest(moduleModels);
-  console.log("[AIDY] manifest generated:", Object.keys(moduleModels).join(", "));
+  const room = listRoom();
+  writeManifest(moduleModels, room);
+  console.log("[AIDY] manifest generated:", Object.keys(moduleModels).join(", "), `/ room: ${Object.keys(room).length}`);
 }
 
-function writeManifest(moduleModels) {
+/** room/ の name.obj ごとに、name.mtl の材質名 → 色 (0xffRRGGBB) を読む。 */
+function listRoom() {
+  /** @type {Record<string, Record<string, number>>} */
+  const out = {};
+  if (!fs.existsSync(roomDir)) return out;
+  for (const file of fs.readdirSync(roomDir).sort()) {
+    if (path.extname(file).toLowerCase() !== ".obj") continue;
+    const name = path.basename(file, ".obj");
+    const colors = {};
+    const mtl = path.join(roomDir, name + ".mtl");
+    if (fs.existsSync(mtl)) {
+      let current = "";
+      for (const raw of fs.readFileSync(mtl, "utf8").split("\n")) {
+        const p = raw.trim().split(/\s+/);
+        if (p[0] === "newmtl") current = p[1] ?? "";
+        else if (p[0] === "Kd" && p.length >= 4) {
+          const c = (i) => Math.round(Math.min(Math.max(parseFloat(p[i]), 0), 1) * 255);
+          colors[current] = (0xff000000 | (c(1) << 16) | (c(2) << 8) | c(3)) >>> 0;
+        }
+      }
+    }
+    out[name] = colors;
+  }
+  return out;
+}
+
+function writeManifest(moduleModels, room) {
   const lines = [
     "// このファイルは scripts/genManifest.js が自動生成します。手で編集しないでください。",
     `export const bodyObj = require('../models/${FixedFiles.bodyObj}');`,
@@ -83,6 +112,13 @@ function writeManifest(moduleModels) {
   for (const [name, { ext, relPath }] of Object.entries(moduleModels)) {
     lines.push(`moduleModels['${name}'] = require('../models/${relPath}');`);
     lines.push(`moduleModelFormats['${name}'] = '${ext}';`);
+  }
+  lines.push("");
+  lines.push("export const roomModels: Record<string, number> = {};");
+  lines.push("export const roomColors: Record<string, Record<string, number>> = {};");
+  for (const [name, colors] of Object.entries(room)) {
+    lines.push(`roomModels['${name}'] = require('../room/${name}.obj');`);
+    lines.push(`roomColors['${name}'] = ${JSON.stringify(colors)};`);
   }
   fs.writeFileSync(path.join(generatedDir, "manifest.ts"), lines.join("\n") + "\n");
 }
