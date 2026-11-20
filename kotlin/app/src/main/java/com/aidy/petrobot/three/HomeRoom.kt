@@ -72,6 +72,9 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
     /** 3D モデルの面がタップで選ばれた/解除された (null)。editable のときだけ。 */
     var onFaceSelected: (String?) -> Unit = {}
 
+    /** ユーザーの操作 ("pet" / "rotate" / "zoom" / "face" / "attach" / "walk")。チュートリアルが「できたか」を見るのに使う。 */
+    var onUserAction: (String) -> Unit = {}
+
     val root: Node = gfx.empty(null, if (editable) "ModuleEdit3D" else "Home3D")
     val camera = AidyCamera(gfx.engine)
     val light: LightNode
@@ -116,6 +119,9 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
     private val starNodes = ArrayList<Node>()
     private val zzz: Node
     private val zNodes = ArrayList<Pair<Node, MaterialInstance>>()
+
+    /** 呼ばれて (本体をタップされて) こっちを向いている残り時間。 */
+    private var callTimer = 0f
 
     // 面を見せる向き
     private var focusTimer = 0f
@@ -193,6 +199,7 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
     private fun onModuleChanged(slot: String, removed: ModuleKind?, added: ModuleKind?) {
         rig.sync()
         lastTouch = now()
+        if (added != null) onUserAction("attach")
         if (added != null)
             startReaction(Reaction.Happy, 1.6f, "♥ ${ModuleCatalog.name(added)}モジュールを付けてもらった！", AidyFace.Happy)
         else if (removed != null)
@@ -213,17 +220,19 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
         }
         rig.setSelectedFace(face)
         onFaceSelected(face)
+        if (face != null) onUserAction("face")
     }
 
-    /** 3D ビュー上のタップ (ビュー内の画素)。editable: 本体の面を選ぶ (外れたら解除)。ホーム: なでなで。 */
+    /** 3D ビュー上のタップ (ビュー内の画素)。editable: 本体の面を選ぶ (外れたら解除)。ホーム: 呼ぶ (こっちを向く)。 */
     fun tapAt(x: Float, y: Float) {
-        if (wakeIfDozing()) return
         val face = pickFace(x, y)
         if (!editable) {
-            if (face != null) petRobotDirectly()
-            else if (moduleAtScreen(x, y, 0f) == null) recall()
+            // 本体をタップ = 呼ばれた (寝ていたら起きる)。なでなでは本体の上で指を左右に動かす (rubStart)
+            if (face != null || moduleAtScreen(x, y, 0f) != null) callToFront()
+            else if (!wakeIfDozing()) recall()
             return
         }
+        if (wakeIfDozing()) return
         if (face == null) {
             // 面を選択中は、ほかの面のパーツのタップには反応しない
             if (selectedFace != null && moduleAtScreen(x, y, 8f) != null) return
@@ -370,6 +379,7 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
 
     /** factor > 1 で近づく。 */
     fun zoomBy(factor: Float) {
+        onUserAction("zoom")
         zoomTarget = (zoomTarget / factor).coerceIn(ZoomMin, ZoomMax)
         lastTouch = now()
     }
@@ -390,11 +400,25 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
 
     // ------------------------------------------------------------ 操作への反応
 
-    /** タップ (なでなで)。短時間に3回以上ならくすぐったがる。 */
-    fun petRobotDirectly() {
+    /** 本体をタップ: 呼ばれたと思って、その場でこっちを向く (ぴょこっと跳ねる)。短時間に3回以上ならくすぐったがる。 */
+    fun callToFront() {
+        onUserAction("call")
         if (wakeIfDozing() || countTaps()) return
-        if (reaction != Reaction.Dizzy)
-            startReaction(Reaction.Happy, 2.5f, "♥ なでなでしてもらってうれしい！", AidyFace.Happy)
+        if (reaction == Reaction.Dizzy) return
+        recalling = false
+        aiState = AIState.Idle
+        callTimer = 3.5f
+        startReaction(Reaction.Bob, 0.6f, "なあに？ 呼んだ？", AidyFace.Happy)
+    }
+
+    /** 本体の上で指を左右に細かく動かした: なでなで (指を離すまでうっとり、離したら holdEnd で喜ぶ)。 */
+    fun rubStart() {
+        onUserAction("pet")
+        if (wakeIfDozing()) return
+        if (holding) return
+        holding = true
+        callTimer = 0f
+        startReaction(Reaction.Snuggle, 999f, "なでなで… きもちいい〜", AidyFace.Sleepy)
     }
 
     private fun countTaps(): Boolean {
@@ -589,6 +613,7 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
 
     /** ドラッグ回転 (dx, dy は dp、y は下向き正)。勢いよく回し続けると目を回す。 */
     fun rotateBy(dx: Float, dy: Float) {
+        onUserAction("rotate")
         if (wakeIfDozing()) return
         robot.r = robot.r.copy(y = robot.r.y + dx * 0.01f, x = robot.r.x + dy * 0.01f)
         robot.apply()
@@ -658,11 +683,24 @@ class HomeRoom(private val gfx: Gfx, val editable: Boolean) {
 
         if (reaction != Reaction.None) {
             if (!draggingModel || reaction == Reaction.Snuggle) tickReaction(dt)
+            // 呼ばれて跳ねている間も、こっちへ向き続ける
+            if (callTimer > 0f && !draggingModel) {
+                callTimer -= dt
+                turnToward(0f, 0.14f)
+            }
             // 取り付け直後の喜びジャンプ中も、選んだ面へ向き続ける
             if (focusTimer > 0f && (reaction == Reaction.Happy || reaction == Reaction.Surprised || reaction == Reaction.Bob)) {
                 focusTimer -= dt
                 robot.r = V3.lerp(robot.r, focusRot, 0.12f)
             }
+        } else if (callTimer > 0f && !draggingModel) {
+            // 呼ばれた: その場でこっちを向いて、しばらくこっちを見ている
+            callTimer -= dt
+            turnToward(0f, 0.14f)
+            rig.swingLegs(0f, 0f)
+            animTime += 0.03f
+            body.p = body.p.copy(y = sin(animTime) * 0.03f)
+            if (callTimer <= 0f) aiTimer = 1f
         } else if (focusTimer > 0f && !draggingModel) {
             focusTimer -= dt
             robot.r = V3.lerp(robot.r, focusRot, 0.12f)

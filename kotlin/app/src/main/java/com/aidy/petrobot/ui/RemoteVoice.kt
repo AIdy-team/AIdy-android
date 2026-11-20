@@ -104,7 +104,7 @@ fun VoiceSettingsCard(visible: Boolean) {
     LaunchedEffect(visible) { if (visible) load() }
 
     Column(
-        Modifier.fillMaxWidth().box(Color.White, 16.dp, 1.dp, Theme.Slate100).padding(horizontal = 16.dp, vertical = 14.dp),
+        Modifier.fillMaxWidth().coachTarget("voice").box(Color.White, 16.dp, 1.dp, Theme.Slate100).padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {

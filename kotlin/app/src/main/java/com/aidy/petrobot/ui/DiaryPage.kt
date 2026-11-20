@@ -145,6 +145,7 @@ class DiaryState {
         selected = date
         month = YearMonth.from(date)
         weekAnchor = date.minusDays(date.dow().toLong())
+        Coach.event("day")
     }
 
     fun shiftPeriod(delta: Int) {
@@ -233,6 +234,7 @@ fun DiaryPage(state: DiaryState, shown: Boolean) {
             }
             Row(
                 Modifier
+                    .coachTarget("diarySync")
                     .pressable(0.95f) { startSync(false) }
                     .box(Theme.PrimaryLight, 16.dp, border = Theme.hex(0xbfdbfe))
                     .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -246,7 +248,7 @@ fun DiaryPage(state: DiaryState, shown: Boolean) {
         Spacer(Modifier.height(14.dp))
         CalendarModeToggle(state)
         Spacer(Modifier.height(8.dp))
-        Calendar(state)
+        Box(Modifier.fillMaxWidth().coachTarget("calendar")) { Calendar(state) }
         Spacer(Modifier.height(12.dp))
         DeviceWeekCard(state)
         Spacer(Modifier.height(12.dp))
@@ -255,7 +257,7 @@ fun DiaryPage(state: DiaryState, shown: Boolean) {
         val entry = DiaryStore.get(state.selected)
         if (entry != null) EntryCard(state, entry) else EmptyCard(state) { startSync(false) }
         Spacer(Modifier.height(12.dp))
-        ScheduleCard(state)
+        Box(Modifier.fillMaxWidth().coachTarget("schedule")) { ScheduleCard(state) }
     }
         // 会話ログが長いとき用: ある程度下にスクロールしたら「上に戻る」ボタンを出す
         val showTop = scroll.value > 600
